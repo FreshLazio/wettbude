@@ -1,0 +1,34 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Wettbude</title>
+<link rel="stylesheet" href="style.css">
+</head>
+<body>
+<header class="top">
+  <div class="brand">Wettbude<span>Spielgeld</span></div>
+  <nav class="tabs">
+    <button data-act="tab" data-tab="wetten">Wetten</button>
+    <button data-act="tab" data-tab="meine">Meine Wetten<b id="openCount"></b></button>
+    <button data-act="tab" data-tab="stats">Statistik</button>
+    <button data-act="tab" data-tab="spieler">Spieler</button>
+  </nav>
+  <label class="search"><input id="q" type="search" placeholder="Team oder Liga suchen" autocomplete="off"><button id="qx" data-act="qClear" title="Suche löschen" hidden>×</button></label>
+  <div class="topRight">
+    <span id="upd">Quoten werden geladen</span>
+    <span id="who"></span>
+    <div class="bal">CHF <b id="bal">500.00</b></div>
+  </div>
+</header>
+<main class="grid">
+  <aside id="side"></aside>
+  <section id="main"><p class="empty">Quoten werden geladen …</p></section>
+  <aside id="slip"></aside>
+</main>
+<button id="slipFab" data-act="sheet" hidden></button>
+<div id="toasts"></div>
+<script type="module" src="app.js"></script>
+</body>
+</html>
