@@ -376,7 +376,11 @@ async function fetchDay(L, day) {
 }
 
 async function fetchTennis() {
-  await pool(LEAGUES.filter((l) => l.sport === T), 2, async (L) => parseTennis(L, await getJSON(`${SITE}tennis/${L.slug}/scoreboard`)));
+  let err = null;
+  for (const L of LEAGUES.filter((l) => l.sport === T)) {
+    try { parseTennis(L, await getJSON(`${SITE}tennis/${L.slug}/scoreboard`)); } catch (e) { err = e; }
+  }
+  if (err) { console.log('ESPN Tennis fehlgeschlagen:', err.message); throw err; }
 }
 
 async function loadRankings() {
@@ -398,10 +402,20 @@ async function probeLeagues() {
 
 async function fullSweep() {
   const days = Array.from({ length: 12 }, (_, i) => dayKey(Date.now() + (i - 2) * DAY));
-  const jobs = [];
+  let jobs = [];
   for (const L of LEAGUES) if (!L.dead && L.es && L.sport !== T) for (const d of days) jobs.push([L, d]);
-  await pool(jobs, 8, ([L, d]) => fetchDay(L, d));
-  await fetchTennis().catch(() => {});
+  // Wichtige Ligen zuerst (NBA, NHL, Top-Fussball), damit sie nicht hinten im Stau landen.
+  const TOP = new Set(['nba', 'nhl', 'ita.1', 'eng.1', 'esp.1', 'ger.1', 'fra.1', 'ita.2', 'uefa.champions']);
+  jobs.sort((a, b) => (TOP.has(b[0].slug) ? 1 : 0) - (TOP.has(a[0].slug) ? 1 : 0));
+  // Fehlgeschlagene Abrufe (z. B. ESPN bremst nach vielen Anfragen) bis zu dreimal nach einer Pause wiederholen.
+  for (let round = 0; round < 4 && jobs.length; round++) {
+    if (round) await new Promise((r) => setTimeout(r, 15000 * round));
+    const failed = [];
+    await pool(jobs, round ? 3 : 5, async (j) => { try { await fetchDay(...j); } catch (e) { failed.push(j); j.err = e.message; } });
+    if (failed.length) console.log(`ESPN: ${failed.length} von ${jobs.length} Abrufen fehlgeschlagen (${failed[0].err}), ${round < 3 ? 'neuer Versuch' : 'nächster Durchgang in 30 min'}`);
+    jobs = failed;
+  }
+  for (let i = 0; i < 3; i++) { try { await fetchTennis(); break; } catch { await new Promise((r) => setTimeout(r, 10000)); } }
   await modelSweep().catch(() => {});
   lastSweep = Date.now();
   prune();
