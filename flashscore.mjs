@@ -11,7 +11,7 @@ const HDR = {
   'x-fsign': 'SW9D1eZo',
   referer: 'https://www.flashscore.com/',
 };
-export const FS_SPORT = { fussball: 1, tennis: 2, basketball: 3, eishockey: 4 };
+export const FS_SPORT = { fussball: 1, tennis: 2, basketball: 3, eishockey: 4, amfootball: 5, rugby: 8 };
 const PRIO = [16, 1]; // bet365, Interwetten
 const NAMES = { 16: 'bet365', 1: 'Interwetten', 645: 'bet-at-home', 3: 'bet-at-home' };
 
@@ -68,12 +68,20 @@ const FS_LEAGUES = {
   'conmebol.libertadores': 'SOUTH AMERICA: Copa Libertadores', 'conmebol.sudamericana': 'SOUTH AMERICA: Copa Sudamericana',
   nhl: 'USA: NHL', 'sui.nl': 'SWITZERLAND: National League', 'sui.sl': 'SWITZERLAND: Swiss League', 'swe.shl': 'SWEDEN: SHL', 'nor.ehl': 'NORWAY: EHL', 'rus.khl': 'RUSSIA: KHL',
   nba: 'USA: NBA', wnba: 'USA: WNBA', 'mens-college-basketball': 'USA: NCAA', nbl: 'AUSTRALIA: NBL',
+  nfl: 'USA: NFL', 'college-football': 'USA: NCAA',
+  // Rugby: Flashscore führt einige Wettbewerbe je nach Saison unter EUROPE oder WORLD, darum mehrere Namen.
+  'rug.top14': 'FRANCE: Top 14', 'rug.prod2': 'FRANCE: Pro D2', 'rug.prem': ['ENGLAND: Premiership Rugby', 'ENGLAND: Premiership'],
+  'rug.urc': ['WORLD: United Rugby Championship', 'EUROPE: United Rugby Championship'], 'rug.cc': ['EUROPE: Champions Cup', 'EUROPE: European Rugby Champions Cup'],
+  'rug.six': ['EUROPE: Six Nations', 'WORLD: Six Nations'], 'rug.rc': 'WORLD: The Rugby Championship', 'rug.nc': ['WORLD: Nations Championship', 'WORLD: World Rugby Nations Cup'],
+  'rug.friendly': 'WORLD: Friendly International', 'rug.super': ['WORLD: Super Rugby', 'WORLD: Super Rugby Pacific'], 'rug.wc': 'WORLD: World Cup',
 };
-const FS_SPORT_OF = (slug) => (/^(nhl|sui\.nl|sui\.sl|swe\.shl|nor\.ehl|rus\.khl)$/.test(slug) ? 'eishockey' : /^(nba|wnba|mens-college-basketball|nbl)$/.test(slug) ? 'basketball' : 'fussball');
+const FS_SPORT_OF = (slug) => (/^(nhl|sui\.nl|sui\.sl|swe\.shl|nor\.ehl|rus\.khl)$/.test(slug) ? 'eishockey' : /^(nba|wnba|mens-college-basketball|nbl)$/.test(slug) ? 'basketball'
+  : /^(nfl|college-football)$/.test(slug) ? 'amfootball' : slug.startsWith('rug.') ? 'rugby' : 'fussball');
 export function fsLeague(sport, name) {
   if (sport === 'tennis') return /^ATP - SINGLES:/.test(name) ? 'atp' : /^WTA - SINGLES:/.test(name) ? 'wta' : null;
-  for (const [slug, key] of Object.entries(FS_LEAGUES)) {
-    if (FS_SPORT_OF(slug) === sport && (name === key || name.startsWith(key + ' - '))) return slug;
+  for (const [slug, keys] of Object.entries(FS_LEAGUES)) {
+    if (FS_SPORT_OF(slug) !== sport) continue;
+    for (const key of [].concat(keys)) if (name === key || name.startsWith(key + ' - ')) return slug;
   }
   return null;
 }
@@ -119,19 +127,20 @@ export async function fsOdds(fsId, hp, ap, sport, { nohalf = false } = {}) {
 }
 
 export function parseOdds(j, hp, ap, sport, nohalf) {
-  const soccer = sport === 'fussball', ice = sport === 'eishockey', basket = sport === 'basketball';
+  const soccer = sport === 'fussball', ice = sport === 'eishockey', rugby = sport === 'rugby', afb = sport === 'amfootball';
+  const basket = sport === 'basketball' || afb || rugby; // Punktesportarten: nur die Haupt-Linie bei Über/Unter
   const books = new Map((j.settings?.bookmakers || []).map((b) => [b.bookmaker.id, NAMES[b.bookmaker.id] || b.bookmaker.name.replace(/\.(de|it|dk|com)$/i, '')]));
   const order = [...PRIO.filter((id) => books.has(id)), ...[...books.keys()].filter((id) => !PRIO.includes(id))];
   const mk = new Map(); // Markt -> Map(Anbieter -> Quoten)
   const put = (key, bid, obj) => { if (!mk.has(key)) mk.set(key, new Map()); mk.get(key).set(bid, obj); };
   const side = (i) => (i.eventParticipantId && i.eventParticipantId === hp ? '1' : i.eventParticipantId && i.eventParticipantId === ap ? '2' : null);
-  const fullOT = basket ? 'FULL_TIME_OVER_TIME' : 'FULL_TIME';
+  const fullOT = basket && !rugby ? 'FULL_TIME_OVER_TIME' : 'FULL_TIME';
 
   for (const o of j.odds) {
     const items = (o.odds || []).filter((i) => i.active !== false && +i.value > 1.001);
     if (!items.length) continue;
     const T = o.bettingType, S = o.bettingScope, b = o.bookmakerId;
-    if (T === 'HOME_DRAW_AWAY' && (soccer || ice) && (S === 'FULL_TIME' || (soccer && !nohalf && S === 'FIRST_HALF'))) {
+    if (T === 'HOME_DRAW_AWAY' && (soccer || ice || rugby) &&(S === 'FULL_TIME' || (soccer && !nohalf && S === 'FIRST_HALF'))) {
       const w = {};
       for (const i of items) { const s = side(i); if (s) w[s] = val(i); else if (!i.eventParticipantId) w.X = val(i); }
       if (w[1] && w.X && w[2]) put(S === 'FULL_TIME' ? '1x2' : 'h1', b, w);
@@ -139,7 +148,7 @@ export function parseOdds(j, hp, ap, sport, nohalf) {
       const w = {};
       for (const i of items) { const s = side(i); if (s) w[s] = val(i); }
       if (w[1] && w[2]) put('ml', b, w);
-    } else if (T === 'DOUBLE_CHANCE' && S === 'FULL_TIME' && (soccer || ice)) {
+    } else if (T === 'DOUBLE_CHANCE' && S === 'FULL_TIME' && (soccer || ice || rugby)) {
       const w = {};
       for (const i of items) { const s = side(i); w[s === '1' ? '1X' : s === '2' ? 'X2' : '12'] = val(i); }
       if (w['1X'] && w['12'] && w.X2) put('dc', b, w);
@@ -181,7 +190,7 @@ export function parseOdds(j, hp, ap, sport, nohalf) {
     }
   }
 
-  const mainKey = soccer || (ice && mk.has('1x2')) ? '1x2' : 'ml';
+  const mainKey = soccer || ((ice || rugby) && mk.has('1x2')) ? '1x2' : 'ml';
   if (!mk.has(mainKey)) return null;
   const pick = (key) => { const m = mk.get(key); const bid = order.find((id) => m?.has(id)) ?? [...(m?.keys() || [])][0]; return bid == null ? null : [bid, m.get(bid)]; };
   const [mainBid] = pick(mainKey);

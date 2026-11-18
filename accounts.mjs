@@ -7,6 +7,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 
 const MAX_STATE = 1_500_000; // Zeichen; reicht für Tausende Wetten
+const ADMIN = (process.env.WB_ADMIN || 'rafael').toLowerCase(); // darf Geld verteilen
 
 export function accounts({ dataDir }) {
   const URL_ = process.env.UPSTASH_REDIS_REST_URL, TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
@@ -74,11 +75,20 @@ export function accounts({ dataDir }) {
     return s;
   };
 
+  // Nach einer Namensänderung zeigt der alte Name auf den neuen (bleibt reserviert,
+  // damit Anmeldungen auf anderen Geräten weiter funktionieren).
+  async function resolve(k) {
+    let u = k && await get('user:' + k);
+    for (let i = 0; u?.moved && i < 5; i++) { k = u.moved; u = await get('user:' + k); }
+    return u && !u.moved ? [k, u] : [k, null];
+  }
+
   async function user(token) {
     if (!token || typeof token !== 'string' || token.length > 64) throw err(401, 'Bitte neu anmelden.');
-    const k = await get('tok:' + token);
-    const u = k && await get('user:' + k);
+    const k0 = await get('tok:' + token);
+    const [k, u] = await resolve(k0);
     if (!u) throw err(401, 'Bitte neu anmelden.');
+    if (k !== k0) await set('tok:' + token, k);
     return [k, u];
   }
 
@@ -102,8 +112,9 @@ export function accounts({ dataDir }) {
   return {
     remote,
     async players(token) {
-      await user(token);
-      if (board && Date.now() - board.at < 60e3) return { list: board.list };
+      const [me] = await user(token);
+      const admin = me === ADMIN;
+      if (board && Date.now() - board.at < 60e3) return { list: board.list, admin };
       // Alle Profile: in Upstash per SCAN über «wb:user:*», lokal alle Schlüssel der Datei.
       const keys = [];
       if (remote) {
@@ -111,14 +122,34 @@ export function accounts({ dataDir }) {
         do { const [next, found] = await cmd(['SCAN', cur, 'MATCH', 'wb:user:*', 'COUNT', '200']); cur = String(next); keys.push(...found.map((x) => x.slice(3))); } while (cur !== '0' && keys.length < 5000);
       } else keys.push(...Object.keys(store()).filter((x) => x.startsWith('user:')));
       const list = [];
-      for (const k of keys) { const u = await get(k); if (u) list.push(summary(u)); }
-      list.sort((a, b) => b.profit - a.profit);
+      for (const k of keys) { const u = await get(k); if (u && !u.moved) list.push(summary(u)); }
+      // Rangliste nach Geld (Guthaben), bei Gleichstand nach Gewinn
+      list.sort((a, b) => b.bal - a.bal || b.profit - a.profit);
       board = { at: Date.now(), list };
-      return { list };
+      return { list, admin };
+    },
+    // Nur der Admin (Rafael) kann anderen Geld geben. Das Startbudget steigt mit, damit es nicht als Gewinn zählt.
+    async gift(token, { name, amount }) {
+      const [me] = await user(token);
+      if (me !== ADMIN) throw err(403, 'Nur der Admin kann Geld verteilen.');
+      const x = Math.round(+amount * 100) / 100;
+      if (!Number.isFinite(x) || x <= 0 || x > 100000) throw err(400, 'Betrag zwischen 0.01 und 100 000 CHF.');
+      const [tk] = await resolve(keyOf(name));
+      return locked(tk, async () => {
+        const u = await get('user:' + tk);
+        if (!u || u.moved) throw err(404, 'Diesen Spieler gibt es nicht.');
+        const s = u.state || {};
+        const r = (v) => Math.round(v * 100) / 100;
+        u.state = { ...s, bal: r((+s.bal || 0) + x), start: r((+s.start || 500) + x), gifts: [...(s.gifts || []), { t: Date.now(), x }] };
+        u.rev++; u.at = Date.now();
+        await set('user:' + tk, u);
+        board = null;
+        return { name: u.name, bal: u.state.bal };
+      });
     },
     async player(token, name) {
       await user(token);
-      const u = await get('user:' + keyOf(name));
+      const [, u] = await resolve(keyOf(name));
       if (!u) throw err(404, 'Diesen Spieler gibt es nicht.');
       const since = Date.now() - WEEK;
       // Nur Wetten der letzten 7 Tage (abgerechnet oder noch offen), neueste zuerst.
@@ -147,11 +178,30 @@ export function accounts({ dataDir }) {
     async login({ name, pw }) {
       const k = keyOf(name);
       if (blocked(k)) throw err(429, 'Zu viele Versuche. Warte 10 Minuten.');
-      const u = await get('user:' + k);
+      const [rk, u] = await resolve(k);
       if (!u || !same(hash(pw || '', u.salt), u.hash)) { fail(k); throw err(403, 'Name oder Passwort stimmt nicht.'); }
       const token = newToken();
-      await set('tok:' + token, k);
+      await set('tok:' + token, rk);
       return { token, name: u.name, rev: u.rev, state: u.state };
+    },
+    async rename(token, name) {
+      const n = checkName(name);
+      const [k] = await user(token);
+      const nk = keyOf(n);
+      return locked(k, async () => {
+        const u = await get('user:' + k);
+        if (!u || u.moved) throw err(409, 'Bitte nochmals versuchen.');
+        if (nk !== k) {
+          const there = await get('user:' + nk);
+          // frei, oder ein früherer eigener Name, der hierher zeigt
+          if (there && there.moved !== k) throw err(409, 'Diesen Namen gibt es schon.');
+        }
+        u.name = n; u.rev++; u.state = { ...u.state, name: n }; u.at = Date.now();
+        await set('user:' + nk, u);
+        if (nk !== k) { await set('user:' + k, { moved: nk }); await set('tok:' + token, nk); }
+        board = null;
+        return { name: n, rev: u.rev, state: u.state };
+      });
     },
     async logout(token) {
       if (token && typeof token === 'string' && token.length <= 64) await del('tok:' + token);

@@ -20,7 +20,7 @@ const SITE = 'https://site.api.espn.com/apis/site/v2/sports/';
 const CORE = 'https://sports.core.api.espn.com/v2/sports/';
 const DAY = 864e5;
 
-const F = 'fussball', B = 'basketball', H = 'eishockey', T = 'tennis';
+const F = 'fussball', B = 'basketball', H = 'eishockey', T = 'tennis', AF = 'amfootball', R = 'rugby';
 const LEAGUES = [
   [F, 'soccer', 'sui.1', 'Super League', 'Schweiz'],
   [F, 'soccer', 'sui.2', 'Challenge League', 'Schweiz'],
@@ -105,6 +105,20 @@ const LEAGUES = [
   [B, 'basketball', 'wnba', 'WNBA', 'USA'],
   [B, 'basketball', 'mens-college-basketball', 'NCAA', 'USA'],
   [B, 'basketball', 'nbl', 'NBL', 'Australien'],
+  // Nur über Flashscore (ESPN-Kürzel leer)
+  [AF, null, 'nfl', 'NFL', 'USA'],
+  [AF, null, 'college-football', 'College Football', 'USA'],
+  [R, null, 'rug.top14', 'Top 14', 'Frankreich'],
+  [R, null, 'rug.prod2', 'Pro D2', 'Frankreich'],
+  [R, null, 'rug.prem', 'Premiership', 'England'],
+  [R, null, 'rug.urc', 'United Rugby Championship', 'International'],
+  [R, null, 'rug.cc', 'Champions Cup', 'International'],
+  [R, null, 'rug.super', 'Super Rugby', 'International'],
+  [R, null, 'rug.six', 'Six Nations', 'Länderspiele'],
+  [R, null, 'rug.rc', 'The Rugby Championship', 'Länderspiele'],
+  [R, null, 'rug.nc', 'Nations Championship', 'Länderspiele'],
+  [R, null, 'rug.wc', 'Weltmeisterschaft', 'Länderspiele'],
+  [R, null, 'rug.friendly', 'Testspiele', 'Länderspiele'],
 ].map(([sport, es, slug, name, land]) => ({ sport, es, slug, name, land, dead: false }));
 // Ligen aus TheSportsDB (Serie C/D, Eishockey Europa) hinter der jeweiligen Sportart einreihen.
 for (const L of TS_LEAGUES) {
@@ -552,6 +566,8 @@ async function fsSweep() {
     for (const x of list) {
       const slug = fsLeague(sport, x.lg);
       if (!slug || !known.has(slug)) continue;
+      // Testspiele: nur A-Nationalteams, keine Junioren (U17, U21, ...)
+      if (/^fifa\.friendly/.test(slug) && /\bU\d{2}\b/.test(x.home + ' ' + x.away)) continue;
       fsCovered.add(slug);
       upsert(fsEvent(sport, slug, x));
     }
@@ -686,6 +702,8 @@ async function accApi(req, res, u) {
     else if (p === 'player' && req.method === 'GET') out = await acc.player(token, u.searchParams.get('n'));
     else if (p === 'profile' && req.method === 'GET') out = await acc.load(token, u.searchParams.get('rev'));
     else if (p === 'profile' && req.method === 'PUT') out = await acc.save(token, await readBody(req));
+    else if (p === 'gift' && req.method === 'POST') out = await acc.gift(token, await readBody(req, 10000));
+    else if (p === 'rename' && req.method === 'POST') out = await acc.rename(token, (await readBody(req, 10000)).name);
     else return send(404, { error: 'Nicht gefunden' });
     send(200, out);
   } catch (e) {
