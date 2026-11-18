@@ -10,6 +10,7 @@ import { fit, derive, fromTable, oneXtwo, hockey, hockeyFit } from './model.mjs'
 import { TS_LEAGUES, tsStart } from './tsdb.mjs';
 import { FS_SPORT, fsList, fsMatch, fsOdds, fsLeague } from './flashscore.mjs';
 import { accounts } from './accounts.mjs';
+import { evalLeg, settleBet } from './public/settle.js';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PUB = path.join(DIR, 'public');
@@ -710,11 +711,36 @@ function payload(need) {
   return { t: now, upd: lastSweep, leagues: LEAGUES.filter((l) => !l.dead || fsCovered.has(l.slug)).map(({ slug, sport, name, land }) => ({ slug, sport, name, land })), events };
 }
 
+// Fremde Scheine werden erst abgerechnet, wenn ihr Besitzer die Seite öffnet. Für die Anzeige
+// bei den anderen Spielern hier schon mit den bekannten Resultaten auswerten (nur Kopie, nicht gespeichert).
+function evFor(id) {
+  const ev = store.get(id);
+  const tw = ev?.fsId && !id.startsWith('fs') && !ev.done && !ev.void && store.get('fs' + ev.fsId);
+  if (!tw || !(tw.done || tw.void)) return ev;
+  const x = { ...ev };
+  for (const k of ['state', 'done', 'void', 'sh', 'sa', 'win', 'h1', 'et', 'ot', 'txt']) x[k] = tw[k];
+  return x;
+}
+function liveBets(bets = []) {
+  for (const b of bets) {
+    if (b.status !== 'open') continue;
+    for (const l of b.legs || []) {
+      if (l.res) continue;
+      const e = evFor(l.ev), r = e && evalLeg(l, e);
+      if (r) { l.res = r; l.score = e.void ? 'abgesagt' : `${e.sh}:${e.sa}`; }
+    }
+    const out = settleBet(b);
+    // pend: entschieden, aber beim Besitzer noch nicht ausbezahlt
+    if (out) Object.assign(b, { status: out.status, payout: out.payout, done: Date.now(), pend: true });
+  }
+  return bets;
+}
+
 let plain = { at: 0, body: '' };
 const MIME = { '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8', '.css': 'text/css; charset=utf-8', '.svg': 'image/svg+xml', '.json': 'application/json', '.png': 'image/png', '.ico': 'image/x-icon' };
 
 // Profile: /api/acc/free, register, login, logout, profile (GET laden, PUT speichern)
-const acc = accounts({ dataDir: DATA });
+const acc = accounts({ dataDir: DATA, enrich: liveBets });
 console.log(acc.remote ? 'Profile werden in Upstash gespeichert' : 'Profile werden in data/users.json gespeichert');
 function readBody(req, max = 2_000_000) {
   return new Promise((ok, bad) => {

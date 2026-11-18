@@ -413,9 +413,11 @@ function betCard(b) {
   // Offene Kombi: wie viele Tipps schon richtig sind
   const ok = b.legs.filter((l) => l.res === 'won').length;
   const prog = b.status === 'open' && b.legs.length > 1 && ok ? `<small class="prog">${ok} von ${b.legs.length} richtig</small>` : '';
-  return `<div class="bet">
-    <div class="betHead"><div>${b.who ? `<b class="who">${esc(b.who)}</b>` : ''}<b>${b.legs.length > 1 ? `Kombi ${b.legs.length}-fach` : 'Einzelwette'}</b><small>${new Date(b.t).toLocaleString('de-CH', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</small>${prog}</div><span class="badge ${b.status}">${label}</span></div>
-    ${b.legs.map((l) => `<div class="leg ${l.res || ''}"><i class="dot ${l.res || ''}"></i><div><b>${esc(l.pick)}</b><small>${esc(l.mk)} · ${esc(l.match)}${l.lg ? ' · ' + esc(l.lg) : ''}</small><small>${l.res ? 'Resultat ' + esc(l.score) + (l.res === 'void' ? ' · ungültig, Quote 1.00' : '') : legState(l)}</small></div><span class="q">${q(l.o)}</span></div>`).join('')}
+  // Tipps im Schein in der Reihenfolge der Anpfiffe
+  const legs = b.legs.slice().sort((x, y) => (x.start || 0) - (y.start || 0));
+  return `<div class="bet ${b.who ? 'st-' + b.status : ''}">
+    <div class="betHead"><div>${b.who ? `<b class="who">${esc(b.who)}</b>` : ''}<b>${b.legs.length > 1 ? `Kombi ${b.legs.length}-fach` : 'Einzelwette'}</b><small>${new Date(b.t).toLocaleString('de-CH', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</small>${prog}</div><span class="badge ${b.status}" ${b.pend ? 'title="Steht fest. Ausbezahlt wird, sobald der Spieler die Seite öffnet."' : ''}>${label}${b.pend && b.status === 'won' ? ' · Auszahlung folgt' : ''}</span></div>
+    ${legs.map((l) => `<div class="leg ${l.res || ''}"><i class="dot ${l.res || ''}"></i><div><b>${esc(l.pick)}</b><small>${esc(l.mk)} · ${esc(l.match)}${l.lg ? ' · ' + esc(l.lg) : ''}</small><small>${l.res ? 'Resultat ' + esc(l.score) + (l.res === 'void' ? ' · ungültig, Quote 1.00' : '') : legState(l)}</small></div><span class="q">${q(l.o)}</span></div>`).join('')}
     <div class="betFoot"><div><span>Einsatz</span><b>CHF ${chf(b.stake)}</b></div><div><span>Gesamtquote</span><b>${q(odds)}</b></div><div><span>${b.status === 'open' ? 'Möglicher Gewinn' : 'Auszahlung'}</span><b class="${b.status === 'won' ? 'pos' : ''}">CHF ${chf(b.status === 'open' ? b.stake * odds : b.payout)}</b></div></div>
   </div>`;
 }
@@ -426,8 +428,8 @@ const P = { list: null, at: 0, sel: null, detail: null, err: '' };
 async function loadPlayers(force) {
   if (!S.tok || (!force && P.list && Date.now() - P.at < 60e3)) return;
   P.at = Date.now();
-  try { const r = await api('players'); P.list = r.list; P.next = r.upcoming || []; P.admin = !!r.admin; P.err = ''; } catch (e) { P.err = e.message; }
-  if (V.tab === 'spieler') renderPlayers();
+  try { const r = await api('players'); P.list = r.list; P.next = r.upcoming || []; P.last = r.recent || []; P.trends = r.trends; P.admin = !!r.admin; P.err = ''; } catch (e) { P.err = e.message; }
+  if (V.tab === 'spieler') renderPlayers(); else if (V.tab === 'trends') renderTrends();
 }
 async function loadPlayer(name) {
   P.sel = name; P.detail = null; renderPlayers();
@@ -485,8 +487,64 @@ function renderPlayers() {
       <span class="num"><small>Offen</small>${p.stakeOpen ? `<b>CHF ${chf(p.stakeOpen)}</b><small class="pos">bis +${chf(r2(p.maxWin - p.stakeOpen))}</small>` : '<b class="none">–</b>'}</span>
       <span class="num"><small>Gesamt</small>${signed(p.profit)}</span></span>
     </button>`).join('')}</div>
-    <h4 class="secHead">Nächste Wetten aller Spieler${P.next?.length ? ` (${P.next.length})` : ''}</h4>
-    <div class="bets">${(P.next || []).map(betCard).join('') || '<p class="empty">Gerade hat niemand offene Wetten.</p>'}</div>`;
+    <div class="twoCol">
+      <section><h4 class="secHead">Nächste Wetten${P.next?.length ? ` (${P.next.length})` : ''}</h4>
+        <div class="bets">${(P.next || []).map(betCard).join('') || '<p class="empty">Gerade hat niemand offene Wetten.</p>'}</div></section>
+      <section><h4 class="secHead">Letzte Ergebnisse${P.last?.length ? ` (${P.last.length})` : ''}</h4>
+        <div class="bets">${(P.last || []).map(betCard).join('') || '<p class="empty">In den letzten 7 Tagen wurde noch nichts abgerechnet.</p>'}</div></section>
+    </div>`;
+}
+
+/* ---------- Trends: was alle Spieler wetten ---------- */
+
+function renderTrends() {
+  loadPlayers();
+  const T = P.trends;
+  if (!T) { $('#main').innerHTML = `<p class="empty">${P.err ? esc(P.err) : 'Trends werden geladen …'}</p>`; return; }
+  const flame = (h) => (h >= 6 ? '🔥🔥' : h >= 3 ? '🔥' : '');
+  const rank = (rows, what) => {
+    if (!rows.length) return '<p class="empty">Noch keine Wetten in den letzten 7 Tagen.</p>';
+    const mx = Math.max(...rows.map((r) => r.n));
+    return `<div class="trList">${rows.map((r, i) => `<div class="trRow">
+      <span class="rank">${i + 1}</span>
+      <span class="trName"><b>${esc(r.k)} ${flame(r.h)}</b><small>${r.p} Spieler · ${r.h} in 48 h${r.w + r.l ? ` · <span class="pos">${r.w} ✓</span> <span class="neg">${r.l} ✗</span>` : ''}</small><i class="trBar" style="width:${Math.max(4, r.n / mx * 100)}%"></i></span>
+      <span class="trN">${r.n}<small>${what}</small></span></div>`).join('')}</div>`;
+  };
+  const o = T.totals || {}, SP = Object.fromEntries(SPORTS);
+  const medal = ['🥇', '🥈', '🥉'];
+  // Podest nur für Spieler im Plus; der mit dem grössten Minus ist der Pechvogel
+  const all7 = T.week || [], wk = all7.filter((p) => p.net > 0).slice(0, 3);
+  const worst = all7.length && all7[all7.length - 1].net < 0 ? all7[all7.length - 1] : null;
+  const spMax = Math.max(1, ...(T.sports || []).map((s) => s.n)), spSum = (T.sports || []).reduce((s, x) => s + x.n, 0);
+  $('#main').innerHTML = `<div class="lgHead"><h3>Trends</h3><span>Alle Spieler · letzte 7 Tage · 🔥 = mindestens 3 Tipps in 48 Stunden</span></div>
+    <div class="stats">
+      <div class="stat"><span>Wetten</span><b>${o.bets ?? 0}</b><small>${o.open ?? 0} noch offen</small></div>
+      <div class="stat"><span>Eingesetzt</span><b>CHF ${chf(o.stake || 0)}</b><small>abgerechnete Scheine</small></div>
+      <div class="stat"><span>Ausbezahlt</span><b>CHF ${chf(o.paid || 0)}</b><small>an alle Gewinner</small></div>
+      <div class="stat"><span>Spieler gegen Bank</span>${signed(o.net || 0)}<small>${o.net > 0 ? 'die Bank verliert' : o.net < 0 ? 'die Bank gewinnt' : 'unentschieden'}</small></div>
+      <div class="stat"><span>Trefferquote</span><b>${o.hit == null ? '–' : o.hit + ' %'}</b><small>aller Scheine</small></div>
+    </div>
+    <div class="twoCol">
+      <section><h4 class="secHead">Spieler der Woche</h4>
+        ${wk.length ? `<div class="podium">${wk.map((p, i) => `<div class="pod p${i + 1}"><span class="medal">${medal[i]}</span><b>${esc(p.who)}</b>${signed(p.net)}</div>`).join('')}</div>` : `<p class="empty">${all7.length ? 'Diese Woche ist noch niemand im Plus.' : 'Noch nichts abgerechnet.'}</p>`}
+        ${worst ? `<p class="pech">🌧️ Pechvogel der Woche: <b>${esc(worst.who)}</b> ${signed(worst.net)}</p>` : ''}</section>
+      <section><h4 class="secHead">Serien</h4>
+        ${(T.streaks || []).length ? `<div class="streaks">${T.streaks.map((s) => `<div class="streak ${s.kind}"><span>${s.kind === 'won' ? '🔥' : '🥶'}</span><b>${esc(s.who)}</b><small>${s.n} ${s.kind === 'won' ? 'Siege' : 'Niederlagen'} in Folge</small></div>`).join('')}</div>` : '<p class="empty">Gerade hat niemand eine Serie (ab 2 gleichen Ergebnissen).</p>'}</section>
+    </div>
+    <h4 class="secHead">Heisse Spiele und Duelle</h4>
+    ${(T.hotGames || []).length ? `<div class="hotGrid">${T.hotGames.map((g) => `<div class="hot ${g.duel ? 'duel' : ''}">
+      <div class="hotHead"><b>${esc(g.match)}</b>${g.duel ? '<span class="vs">⚔️ Duell</span>' : `<span class="cnt">${g.players} Spieler</span>`}</div>
+      <small>${dayLabel(g.start)} ${timeLabel(g.start)} · ${esc(g.lg || '')}</small>
+      ${g.tips.map((t) => `<div class="tip"><span class="tw">${esc(t.who)}</span><span>${esc(t.pick)} <small>${esc(t.mk || '')}</small></span><b>${q(t.o)}</b></div>`).join('')}
+    </div>`).join('')}</div>` : '<p class="empty">Noch kein kommendes Spiel, auf das mehrere tippen.</p>'}
+    <h4 class="secHead">Spannende Ereignisse</h4>
+    <div class="evGrid">${T.events.map((e, i) => `<${e.bet ? 'button' : 'div'} class="evCard ${P.evSel === i ? 'sel' : ''}" ${e.bet ? `data-act="evShow" data-i="${i}"` : ''}><span class="evIcon">${e.icon}</span><div><small>${esc(e.title)}</small><b>${esc(e.who)}</b><strong>${esc(e.val || '')}</strong><small>${esc(e.text || '')}</small>${e.bet ? `<small class="more">${P.evSel === i ? 'Schein ausblenden' : 'Schein ansehen ›'}</small>` : ''}</div></${e.bet ? 'button' : 'div'}>`).join('') || '<p class="empty">Noch nichts passiert.</p>'}</div>
+    ${T.events[P.evSel]?.bet ? `<div class="bets evBet">${betCard({ ...T.events[P.evSel].bet, who: T.events[P.evSel].who })}</div>` : ''}
+    <div class="twoCol">
+      <section><h4 class="secHead">Beliebteste Teams</h4>${rank(T.teams, 'Tipps')}</section>
+      <section><h4 class="secHead">Beliebteste Ligen</h4>${rank(T.leagues, 'Tipps')}</section>
+    </div>
+    ${spSum ? `<h4 class="secHead">Tipps nach Sportart</h4><div class="trList">${T.sports.map((s) => `<div class="trRow"><span class="rank"></span><span class="trName"><b>${esc(SP[s.k] || s.k)}</b><i class="trBar" style="width:${Math.max(4, s.n / spMax * 100)}%"></i></span><span class="trN">${Math.round(s.n / spSum * 100)} %<small>${s.n} Tipps</small></span></div>`).join('')}</div>` : ''}`;
 }
 
 function renderMine() {
@@ -731,7 +789,7 @@ function render() {
   renderTop();
   renderSide();
   document.body.classList.toggle('noSide', V.tab !== 'wetten');
-  if (V.tab === 'wetten') renderList(); else if (V.tab === 'stats') renderStats(); else if (V.tab === 'spieler') renderPlayers(); else renderMine();
+  if (V.tab === 'wetten') renderList(); else if (V.tab === 'stats') renderStats(); else if (V.tab === 'spieler') renderPlayers(); else if (V.tab === 'trends') renderTrends(); else renderMine();
   renderSlip();
 }
 
@@ -750,7 +808,8 @@ document.addEventListener('click', (ev) => {
   if (!b || b.tagName === 'SELECT') return;
   const a = b.dataset.act;
   if (a === 'pick') return togglePick(b.dataset.k);
-  if (a === 'tab') { V.tab = b.dataset.tab; if (V.tab === 'spieler') { P.sel = null; loadPlayers(true); } }
+  if (a === 'evShow') { const i = +b.dataset.i; P.evSel = P.evSel === i ? null : i; renderTrends(); return; }
+  if (a === 'tab') { V.tab = b.dataset.tab; if (V.tab === 'spieler') { P.sel = null; loadPlayers(true); } if (V.tab === 'trends') { P.evSel = null; loadPlayers(true); } }
   else if (a === 'pl') return void loadPlayer(b.dataset.n);
   else if (a === 'plBack') { P.sel = null; P.detail = null; }
   else if (a === 'sport') { V.sport = b.dataset.s; V.lg = 'all'; }

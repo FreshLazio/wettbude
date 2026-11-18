@@ -321,3 +321,63 @@ button.odd:hover:not(:disabled) { border-color: var(--pine); }
 
 /* Nächste Wetten aller Spieler: Name vor dem Schein */
 .betHead b.who { background: #163d2b; color: #fff; padding: 2px 8px; border-radius: 6px; margin-right: 6px; font-size: 13px; }
+
+/* Spieler-Tab: nächste Wetten und letzte Ergebnisse nebeneinander */
+.twoCol { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; align-items: start; }
+.twoCol > section { min-width: 0; }
+.bet.st-won { border-left: 4px solid #1f9d55; }
+.bet.st-lost { border-left: 4px solid #d64545; }
+.bet.st-won .betHead { background: #eaf7ef; }
+.bet.st-lost .betHead { background: #fcecec; }
+
+/* Trends */
+.evGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(210px, 1fr)); gap: 10px; margin-bottom: 8px; }
+.evCard { display: flex; gap: 10px; align-items: flex-start; background: #fff; border: 1px solid #e3e0d8; border-radius: 10px; padding: 12px; }
+.evIcon { font-size: 26px; line-height: 1; }
+.evCard div { display: flex; flex-direction: column; gap: 2px; min-width: 0; }
+.evCard small { color: #777; font-size: 12px; overflow-wrap: anywhere; }
+.evCard b { font-size: 15px; }
+.evCard strong { font-size: 18px; color: #163d2b; }
+.trList { background: #fff; border: 1px solid #e3e0d8; border-radius: 10px; overflow: hidden; }
+.trRow { display: grid; grid-template-columns: 28px 1fr auto; gap: 10px; align-items: center; padding: 9px 12px; border-top: 1px solid #f0ede6; }
+.trRow:first-child { border-top: 0; }
+.trRow .rank { color: #999; font-weight: 700; text-align: center; }
+.trName { display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.trName small { color: #777; font-size: 12px; }
+.trBar { display: block; height: 4px; border-radius: 2px; background: linear-gradient(90deg, #f0a020, #e0522c); }
+.trN { font-weight: 700; font-size: 18px; text-align: right; display: flex; flex-direction: column; }
+.trN small { font-size: 11px; font-weight: 400; color: #888; }
+@media (max-width: 900px) { .twoCol { grid-template-columns: 1fr; } }
+button.evCard { font: inherit; text-align: left; cursor: pointer; color: inherit; }
+button.evCard:hover { border-color: #163d2b; }
+.evCard.sel { border-color: #163d2b; box-shadow: 0 0 0 2px #163d2b33; }
+.evCard small.more { color: #1f7a4a; font-weight: 600; margin-top: 4px; }
+.evBet { margin-bottom: 12px; }
+
+/* Trends: Kopfzahlen, Podest, Serien, heisse Spiele */
+.stat small { display: block; color: #888; font-size: 11px; margin-top: 2px; }
+.podium { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; align-items: end; }
+.pod { background: #fff; border: 1px solid #e3e0d8; border-radius: 10px; padding: 10px 8px; text-align: center; display: flex; flex-direction: column; gap: 3px; min-width: 0; }
+.pod b { overflow-wrap: anywhere; }
+.pod .medal { font-size: 26px; }
+.pod.p1 { order: 2; padding-top: 22px; border-color: #e5b93a; background: #fffaf0; }
+.pod.p2 { order: 1; padding-top: 14px; }
+.pod.p3 { order: 3; }
+.pech { margin: 8px 2px 0; color: #666; font-size: 13px; }
+.streaks { display: flex; flex-direction: column; gap: 6px; }
+.streak { display: grid; grid-template-columns: 28px 1fr auto; align-items: center; gap: 8px; background: #fff; border: 1px solid #e3e0d8; border-left: 4px solid #1f9d55; border-radius: 8px; padding: 8px 10px; }
+.streak.lost { border-left-color: #4a7fd6; }
+.streak span { font-size: 20px; }
+.streak small { color: #666; }
+.hotGrid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 10px; }
+.hot { background: #fff; border: 1px solid #e3e0d8; border-radius: 10px; padding: 10px 12px; display: flex; flex-direction: column; gap: 4px; }
+.hot.duel { border-color: #d64545; box-shadow: 0 0 0 2px #d6454522; }
+.hotHead { display: flex; justify-content: space-between; gap: 8px; align-items: center; }
+.hot > small { color: #888; font-size: 12px; }
+.hot .vs { background: #d64545; color: #fff; font-size: 11px; font-weight: 700; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
+.hot .cnt { background: #eee; color: #555; font-size: 11px; padding: 2px 7px; border-radius: 10px; white-space: nowrap; }
+.hot .tip { display: grid; grid-template-columns: auto 1fr auto; gap: 8px; align-items: baseline; border-top: 1px solid #f0ede6; padding-top: 4px; font-size: 14px; }
+.hot .tip small { color: #888; }
+.hot .tw { background: #163d2b; color: #fff; font-size: 12px; font-weight: 600; padding: 1px 7px; border-radius: 6px; }
+@media (max-width: 600px) { .podium .medal { font-size: 22px; } .pod { padding: 8px 4px; font-size: 13px; } }
+@media (max-width: 600px) { .evGrid { grid-template-columns: 1fr 1fr; gap: 8px; } .evCard { flex-direction: column; gap: 4px; padding: 10px; } .evIcon { font-size: 20px; } .evCard strong { font-size: 16px; } }

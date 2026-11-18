@@ -9,7 +9,8 @@ import path from 'node:path';
 const MAX_STATE = 1_500_000; // Zeichen; reicht für Tausende Wetten
 const ADMIN = (process.env.WB_ADMIN || 'rafael').toLowerCase(); // darf Geld verteilen
 
-export function accounts({ dataDir }) {
+// enrich(bets): wertet Kopien offener Scheine mit bekannten Resultaten aus (vom Server), nur für die Anzeige.
+export function accounts({ dataDir, enrich = (b) => b }) {
   const URL_ = process.env.UPSTASH_REDIS_REST_URL, TOKEN = process.env.UPSTASH_REDIS_REST_TOKEN;
   const remote = !!(URL_ && TOKEN);
   const file = path.join(dataDir, 'users.json');
@@ -34,6 +35,16 @@ export function accounts({ dataDir }) {
   async function get(k) {
     if (remote) { const v = await cmd(['GET', 'wb:' + k]); return v ? JSON.parse(v) : null; }
     return store()[k] ?? null;
+  }
+  // Viele Profile auf einmal (Upstash: MGET in Paketen statt einer Anfrage pro Profil)
+  async function getMany(keys) {
+    if (!remote) return keys.map((k) => store()[k] ?? null);
+    const out = [];
+    for (let i = 0; i < keys.length; i += 100) {
+      const vals = await cmd(['MGET', ...keys.slice(i, i + 100).map((k) => 'wb:' + k)]);
+      for (const v of vals) { try { out.push(v ? JSON.parse(v) : null); } catch { out.push(null); } }
+    }
+    return out;
   }
   async function set(k, v) {
     if (remote) return cmd(['SET', 'wb:' + k, JSON.stringify(v)]);
@@ -112,33 +123,145 @@ export function accounts({ dataDir }) {
     };
   };
 
+  // Trends der letzten 7 Tage über alle Spieler: meistgewettete Ligen und Teams, spannende Ereignisse.
+  function trendsOf(all, people = []) {
+    const now = Date.now(), r2 = (v) => Math.round(v * 100) / 100;
+    const oddsOf = (b) => (b.legs || []).reduce((q, l) => q * (+l.o || 1), 1) * Object.values(b.gf || {}).reduce((q, f) => q * (+f || 1), 1);
+    const lg = new Map(), tm = new Map();
+    const add = (m, k, x) => {
+      if (!k) return;
+      const r = m.get(k) || { k, n: 0, h: 0, who: new Set(), w: 0, l: 0, sp: x.sp };
+      r.n++; r.who.add(x.who);
+      if (x.t > now - 2 * 864e5) r.h++;
+      if (x.res === 'won') r.w++; else if (x.res === 'lost') r.l++;
+      m.set(k, r);
+    };
+    for (const b of all) for (const l of b.legs || []) {
+      const x = { sp: l.sp, t: b.t, who: b.who, res: l.res };
+      add(lg, l.lg, x);
+      // Team: das getippte Team, sonst (Tore, Handicap …) beide Teams des Spiels
+      const sides = String(l.match || '').split(' – ').filter(Boolean);
+      for (const s of sides.includes(l.pick) ? [l.pick] : sides) add(tm, s, x);
+    }
+    const top = (m) => [...m.values()].sort((a, b) => b.n - a.n || b.h - a.h).slice(0, 10)
+      .map((r) => ({ k: r.k, n: r.n, h: r.h, p: r.who.size, w: r.w, l: r.l, sp: r.sp }));
+
+    const done = all.filter((b) => b.status === 'won' || b.status === 'lost');
+    const won = done.filter((b) => b.status === 'won'), lost = done.filter((b) => b.status === 'lost');
+    const max = (arr, f) => arr.reduce((m, b) => (!m || f(b) > f(m) ? b : m), null);
+    const ev = [];
+    // Der ganze Schein kommt mit, damit man per Klick sieht, welche Spiele es waren.
+    const push = (icon, title, b, val, text) => b && ev.push({ icon, title, who: b.who, val, text, t: b.done || b.t, bet: b });
+    const legTxt = (b) => b.legs.length > 1 ? b.legs.map((l) => l.pick).join(' + ') : `«${b.legs[0].pick}» in ${b.legs[0].match}`;
+    let b = max(won, (x) => x.payout - x.stake);
+    push('💰', 'Grösster Gewinn', b, b && `+CHF ${r2(b.payout - b.stake).toFixed(2)}`, b && legTxt(b));
+    b = max(won, (x) => x.payout / x.stake);
+    push('🎯', 'Höchste Quote getroffen', b, b && (b.payout / b.stake).toFixed(2), b && legTxt(b));
+    b = max(won.filter((x) => x.legs.length > 1), (x) => x.legs.length * 100 + x.payout / x.stake);
+    push('🧩', 'Grösste Kombi getroffen', b, b && `${b.legs.length} Tipps`, b && `Quote ${(b.payout / b.stake).toFixed(2)}`);
+    // Bitterste Niederlage: Kombi, bei der nur ein einziger Tipp danebenging
+    b = max(lost.filter((x) => x.legs.length > 2 && x.legs.filter((l) => l.res === 'lost').length === 1 && x.legs.every((l) => l.res === 'won' || l.res === 'lost')), oddsOf);
+    const miss = b?.legs.find((l) => l.res === 'lost');
+    push('😖', 'Bitterste Niederlage', b, b && `Quote ${oddsOf(b).toFixed(2)}`, b && `nur «${miss.pick}» falsch (${miss.match})`);
+    b = max(lost, (x) => x.stake);
+    push('💸', 'Grösster Verlust', b, b && `−CHF ${r2(b.stake).toFixed(2)}`, b && legTxt(b));
+    const openBets = all.filter((x) => x.status === 'open');
+    b = max(openBets, (x) => x.stake * oddsOf(x));
+    push('⏳', 'Grösster offener Schein', b, b && `bis CHF ${r2(b.stake * oddsOf(b)).toFixed(2)}`, b && legTxt(b));
+    // Spieler-Rekorde
+    const per = new Map();
+    for (const x of all) { const p = per.get(x.who) || { n: 0, w: 0, d: 0 }; p.n++; if (x.status === 'won') p.w++; if (x.status === 'won' || x.status === 'lost') p.d++; per.set(x.who, p); }
+    const busy = [...per.entries()].sort((a, c) => c[1].n - a[1].n)[0];
+    if (busy) ev.push({ icon: '🏃', title: 'Fleissigster Spieler', who: busy[0], val: `${busy[1].n} Wetten`, text: 'in den letzten 7 Tagen' });
+    const sharp = [...per.entries()].filter(([, p]) => p.d >= 5).sort((a, c) => c[1].w / c[1].d - a[1].w / a[1].d)[0];
+    if (sharp) ev.push({ icon: '🧠', title: 'Beste Trefferquote', who: sharp[0], val: `${Math.round(sharp[1].w / sharp[1].d * 100)} %`, text: `${sharp[1].w} von ${sharp[1].d} Wetten gewonnen` });
+    // Heissestes Team: am meisten Tipps in den letzten 48 Stunden
+    const hot = [...tm.values()].sort((a, c) => c.h - a.h)[0];
+    if (hot?.h >= 2) ev.push({ icon: '🔥', title: 'Heissestes Team', who: hot.k, val: `${hot.h} Tipps`, text: `in den letzten 48 Stunden, von ${hot.who.size} Spieler${hot.who.size === 1 ? '' : 'n'}` });
+    // Mutigster Spieler: höchste durchschnittliche Quote (mindestens 3 Scheine)
+    const brave = [...new Set(all.map((x) => x.who))].map((w) => { const l = all.filter((x) => x.who === w); return [w, l.length, l.reduce((s, x) => s + oddsOf(x), 0) / l.length]; })
+      .filter((x) => x[1] >= 3).sort((a, c) => c[2] - a[2])[0];
+    if (brave) ev.push({ icon: '🦁', title: 'Mutigster Spieler', who: brave[0], val: `Ø Quote ${brave[2].toFixed(2)}`, text: `über ${brave[1]} Scheine` });
+
+    // Kopfzahlen der Woche: was gesetzt und ausbezahlt wurde, und wie die Spieler gegen die Bank stehen
+    const stake = done.reduce((s, x) => s + x.stake, 0), paid = won.reduce((s, x) => s + (x.payout || 0), 0);
+    const totals = { bets: all.length, open: openBets.length, stake: r2(stake), paid: r2(paid), net: r2(paid - stake), hit: done.length ? Math.round(won.length / done.length * 100) : null };
+
+    // Spieler der Woche: Gewinn/Verlust der abgerechneten Scheine
+    const wk = new Map();
+    for (const x of done) wk.set(x.who, (wk.get(x.who) || 0) + (x.payout || 0) - x.stake);
+    const week = [...wk.entries()].map(([who, net]) => ({ who, net: r2(net) })).sort((a, c) => c.net - a.net);
+
+    // Serien: ab 2 gleichen Ergebnissen in Folge
+    const streaks = people.filter((p) => p.streak?.n >= 2).map((p) => ({ who: p.name, ...p.streak })).sort((a, c) => c.n - a.n).slice(0, 8);
+
+    // Heisse Spiele: kommende Spiele, auf die mehrere Spieler tippen. Duell = verschiedene Tipps im selben Markt.
+    const games = new Map();
+    for (const x of openBets) for (const l of x.legs || []) {
+      if (l.res || !(l.start > now)) continue;
+      const g = games.get(l.ev) || { match: l.match, start: l.start, lg: l.lg, sp: l.sp, tips: [] };
+      g.tips.push({ who: x.who, pick: l.pick, mk: l.mk, m: l.m, o: l.o });
+      games.set(l.ev, g);
+    }
+    const hotGames = [...games.values()].map((g) => {
+      const who = new Set(g.tips.map((t) => t.who));
+      const byM = new Map();
+      for (const t of g.tips) { const s = byM.get(t.m) || new Map(); s.set(t.pick, t.who); byM.set(t.m, s); }
+      const duel = [...byM.values()].some((s) => s.size > 1 && new Set(s.values()).size > 1);
+      return { ...g, players: who.size, duel };
+    }).filter((g) => g.players >= 2 || g.tips.length >= 3).sort((a, c) => c.duel - a.duel || c.players - a.players || a.start - c.start).slice(0, 8);
+
+    // Verteilung nach Sportart (Anzahl Tipps)
+    const sp = new Map();
+    for (const x of all) for (const l of x.legs || []) sp.set(l.sp || 'andere', (sp.get(l.sp || 'andere') || 0) + 1);
+    const sports = [...sp.entries()].map(([k, n]) => ({ k, n })).sort((a, c) => c.n - a.n);
+
+    return { leagues: top(lg), teams: top(tm), events: ev, bets: all.length, totals, week, streaks, hotGames, sports };
+  }
+
   return {
     remote,
     async players(token) {
       const [me] = await user(token);
       const admin = me === ADMIN;
-      if (board && Date.now() - board.at < 60e3) return { list: board.list, upcoming: board.upcoming, admin };
+      if (board && Date.now() - board.at < 60e3) return { list: board.list, upcoming: board.upcoming, recent: board.recent, trends: board.trends, admin };
       // Alle Profile: in Upstash per SCAN über «wb:user:*», lokal alle Schlüssel der Datei.
       const keys = [];
       if (remote) {
         let cur = '0';
         do { const [next, found] = await cmd(['SCAN', cur, 'MATCH', 'wb:user:*', 'COUNT', '200']); cur = String(next); keys.push(...found.map((x) => x.slice(3))); } while (cur !== '0' && keys.length < 5000);
       } else keys.push(...Object.keys(store()).filter((x) => x.startsWith('user:')));
-      const list = [], next = [];
+      const list = [], next = [], last = [], all = [], people = [];
+      const now = Date.now();
       // Nächster Anpfiff eines Scheins: frühester Start der noch offenen Tipps
       const kick = (b) => Math.min(...(b.legs || []).filter((l) => !l.res).map((l) => +l.start || Infinity), Infinity);
-      for (const k of keys) {
-        const u = await get(k);
+      for (const u of await getMany(keys)) {
         if (!u || u.moved) continue;
         list.push(summary(u));
-        for (const b of u.state?.bets || []) if (b.status === 'open') next.push({ ...b, who: u.name, k: kick(b) });
+        const bets = Array.isArray(u.state?.bets) ? u.state.bets : [];
+        // Kopien: offene Scheine und alles der letzten 7 Tage, offene mit bekannten Resultaten ausgewertet
+        const mine = enrich(bets.filter((b) => b.status === 'open' || (b.done || b.t) > now - WEEK).map((b) => ({ ...structuredClone(b), who: u.name })));
+        for (const b of mine) {
+          all.push(b);
+          if (b.status === 'open') next.push({ ...b, k: kick(b) });
+          else if (b.status === 'won' || b.status === 'lost') last.push(b);
+        }
+        // Aktuelle Serie: gleiche Ergebnisse in Folge, neueste zuerst (ungültige zählen nicht)
+        const settled = [...bets.filter((b) => b.status === 'won' || b.status === 'lost'), ...mine.filter((b) => b.pend && b.status !== 'void')]
+          .sort((a, b) => (b.done || b.t) - (a.done || a.t));
+        let n = 0;
+        while (n < settled.length && settled[n].status === settled[0].status) n++;
+        people.push({ name: u.name, streak: n ? { kind: settled[0].status, n } : null });
       }
       // Rangliste nach Geld (Guthaben), bei Gleichstand nach Gewinn
       list.sort((a, b) => b.bal - a.bal || b.profit - a.profit);
       // Offene Wetten aller Spieler, die nächste zuerst (höchstens 60)
       const upcoming = next.sort((a, b) => a.k - b.k || a.t - b.t).slice(0, 60).map(({ k, ...b }) => b);
-      board = { at: Date.now(), list, upcoming };
-      return { list, upcoming, admin };
+      // Zuletzt abgerechnete Siege und Niederlagen aller Spieler, neueste zuerst
+      const recent = last.sort((a, b) => (b.done || b.t) - (a.done || a.t)).slice(0, 40);
+      const trends = trendsOf(all, people);
+      board = { at: Date.now(), list, upcoming, recent, trends };
+      return { list, upcoming, recent, trends, admin };
     },
     // Nur der Admin (Rafael) kann anderen Geld geben. Das Startbudget steigt mit, damit es nicht als Gewinn zählt.
     async gift(token, { name, amount }) {
@@ -165,8 +288,8 @@ export function accounts({ dataDir }) {
       if (!u) throw err(404, 'Diesen Spieler gibt es nicht.');
       const since = Date.now() - WEEK;
       // Nur Wetten der letzten 7 Tage (abgerechnet oder noch offen), neueste zuerst.
-      const bets = (u.state?.bets || []).filter((b) => (b.status === 'open' ? b.t : b.done || b.t) > since || b.status === 'open')
-        .sort((a, b) => (b.done || b.t) - (a.done || a.t)).slice(0, 200);
+      const bets = enrich((u.state?.bets || []).filter((b) => (b.done || b.t) > since || b.status === 'open')
+        .sort((a, b) => (b.done || b.t) - (a.done || a.t)).slice(0, 200).map((b) => structuredClone(b)));
       return { ...summary(u), bets };
     },
     async free(name) {
