@@ -8,7 +8,7 @@ import { FD, FD_LEAGUES, parseFixtures, parseResults } from './fd.mjs';
 import zlib from 'node:zlib';
 import { fit, derive, fromTable, oneXtwo, hockey, hockeyFit } from './model.mjs';
 import { TS_LEAGUES, tsStart } from './tsdb.mjs';
-import { FS_SPORT, fsList, fsMatch, fsOdds } from './flashscore.mjs';
+import { FS_SPORT, fsList, fsMatch, fsOdds, fsLeague } from './flashscore.mjs';
 import { accounts } from './accounts.mjs';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
@@ -413,6 +413,8 @@ async function fullSweep() {
     const failed = [];
     await pool(jobs, round ? 3 : 5, async (j) => { try { await fetchDay(...j); } catch (e) { failed.push(j); j.err = e.message; } });
     if (failed.length) console.log(`ESPN: ${failed.length} von ${jobs.length} Abrufen fehlgeschlagen (${failed[0].err}), ${round < 3 ? 'neuer Versuch' : 'nächster Durchgang in 30 min'}`);
+    // Alles gesperrt (z. B. HTTP 403 auf dem Server): nicht weiter anklopfen, Flashscore liefert die Spiele.
+    if (failed.length === jobs.length && /403/.test(failed[0]?.err || '')) { console.log('ESPN gesperrt, Spiele kommen von Flashscore'); break; }
     jobs = failed;
   }
   for (let i = 0; i < 3; i++) { try { await fetchTennis(); break; } catch { await new Promise((r) => setTimeout(r, 10000)); } }
@@ -490,7 +492,7 @@ async function fastSweep() {
 // bet365-Quoten: ein Abruf pro Fussballspiel, darum gedrosselt und gecacht.
 async function b365Sweep() {
   const now = Date.now();
-  const due = [...store.values()].filter((ev) => ev.sport === F && !ev.fd && ev.state === 'pre' && !ev.void && ev.start > now && ev.start < now + 5 * DAY
+  const due = [...store.values()].filter((ev) => ev.sport === F && !ev.fd && !ev.id.startsWith('fs') && !fsCovered.has(ev.lg) && ev.state === 'pre' && !ev.void && ev.start > now && ev.start < now + 5 * DAY
     && now - (ev.b365At || 0) > (ev.start - now < 3 * 36e5 ? 5 : 25) * 6e4);
   due.sort((a, b) => a.start - b.start);
   await pool(due.slice(0, 400), 5, async (ev) => {
@@ -503,31 +505,75 @@ async function b365Sweep() {
 }
 
 // Flashscore: Spiele zuordnen und Quoten aller Anbieter holen (bet365, dann Interwetten, dann Rest).
-const fsLists = new Map(); // Sportart -> { at, list }
+const fsDays = new Map(); // "Sportart|Tag" -> { at, list }
+const fsCovered = new Set(); // Ligen, deren Spiele von Flashscore kommen
 let fsStat = { matched: 0, odds: 0, at: 0 };
+
+// Ein Flashscore-Spiel als eigenes Spiel: Spielplan, Live-Stand und Resultat.
+function fsEvent(sport, slug, x) {
+  const soccer = sport === F;
+  const pre = x.st === 1 || (x.st !== 2 && x.st !== 3);
+  const fin = x.st === 3 && [3, 10, 11].includes(x.ac);
+  const extra = x.ac === 10 || x.ac === 11;
+  // Fussball und Eishockey zählen nach 90 bzw. 60 Minuten; Flashscore liefert diesen Stand separat.
+  const reg = (soccer || sport === H) && extra && x.rt[0] != null ? x.rt : x.g;
+  const ev = {
+    id: 'fs' + x.id, sport, lg: slug, start: x.start, day: '',
+    home: { id: x.hp, n: x.home, s: x.home, l: x.lh }, away: { id: x.ap, n: x.away, s: x.away, l: x.la },
+    state: pre ? 'pre' : x.st === 2 ? 'in' : 'post', done: fin && reg[0] != null && reg[1] != null,
+    void: x.st === 3 && !fin, et: false, ot: false,
+    sh: pre ? null : fin ? reg[0] : x.g[0], sa: pre ? null : fin ? reg[1] : x.g[1],
+    win: fin && sport !== F ? x.win : null,
+    h1: soccer && x.st === 3 && x.h1[0] != null && x.h1[1] != null ? x.h1 : null,
+    txt: pre ? '' : x.st === 2 ? 'läuft' : !fin ? 'abgesagt' : x.ac === 10 ? `n. V. ${x.g[0]}:${x.g[1]}` : x.ac === 11 ? `n. P. ${x.g[0]}:${x.g[1]}` : 'Beendet',
+    fsId: x.id, fsH: x.hp, fsA: x.ap, src: {},
+  };
+  if (sport === T) ev.tour = x.lg.replace(/^(ATP|WTA) - SINGLES:\s*/, '');
+  return ev;
+}
+
 async function fsSweep() {
   const now = Date.now();
   for (const [sport, sid] of Object.entries(FS_SPORT)) {
-    const c = fsLists.get(sport);
-    if (c && now - c.at < 15 * 6e4) continue;
-    const list = [];
-    for (let d = -1; d <= 7; d++) {
-      try { list.push(...(await fsList(sid, d))); } catch { /* Tag fehlt, nächstes Mal */ }
+    for (const d of [0, 1, 2, -1, 3, 4, 5, 6, 7, -2, -3, -4, -5, -6, -7]) {
+      const k = sport + '|' + d, c = fsDays.get(k);
+      // heute/gestern oft (Live-Stand, Resultate), die übrigen Tage seltener
+      const ttl = d >= -1 && d <= 0 ? 5 : d < -1 ? 180 : d <= 2 ? 30 : 120;
+      if (c && now - c.at < ttl * 6e4) continue;
+      try { fsDays.set(k, { at: now, list: (await fsList(sid, d)).filter((x) => !/\//.test(x.home + x.away)) }); } catch { /* Tag fehlt, nächstes Mal */ }
       await new Promise((r) => setTimeout(r, 300));
     }
-    if (list.length) fsLists.set(sport, { at: now, list: list.filter((x) => !/\//.test(x.home + x.away)) });
+  }
+  const lists = new Map();
+  for (const [k, c] of fsDays) { const s = k.split('|')[0]; if (!lists.has(s)) lists.set(s, []); lists.get(s).push(...c.list); }
+  // Spiele der bekannten Ligen direkt übernehmen
+  const known = new Set(LEAGUES.map((l) => l.slug));
+  for (const [sport, list] of lists) {
+    for (const x of list) {
+      const slug = fsLeague(sport, x.lg);
+      if (!slug || !known.has(slug)) continue;
+      fsCovered.add(slug);
+      upsert(fsEvent(sport, slug, x));
+    }
   }
   const open = [...store.values()].filter((e) => e.state === 'pre' && !e.void && e.start > now && e.start < now + 8 * DAY);
   let matched = 0;
   for (const ev of open) {
     if (!ev.fsId) {
-      const c = fsLists.get(ev.sport);
-      const hit = c && fsMatch(ev, c.list);
+      const hit = lists.has(ev.sport) && fsMatch(ev, lists.get(ev.sport));
       if (hit) Object.assign(ev, { fsId: hit.id, fsH: hit.hp, fsA: hit.ap });
     }
-    if (ev.fsId) matched++;
+    if (!ev.fsId) continue;
+    matched++;
+    // Spiel aus anderer Quelle mit Flashscore-Zwilling: dessen Modellquote weitergeben, falls Flashscore keine hat.
+    const tw = !ev.id.startsWith('fs') && store.get('fs' + ev.fsId);
+    if (tw && tw.state === 'pre' && !tw.src.fs) {
+      for (const k of ['b365', 'dk', 'mod', 'lam']) if (ev.src?.[k]) tw.src[k] = ev.src[k];
+      build(tw);
+    }
   }
-  const due = open.filter((e) => e.fsId && now - (e.fsAt || 0) > (e.start - now < 3 * 36e5 ? 10 : e.start - now < DAY ? 30 : 120) * 6e4);
+  const due = open.filter((e) => e.fsId && (e.id.startsWith('fs') || !fsCovered.has(e.lg))
+    && now - (e.fsAt || 0) > (e.start - now < 3 * 36e5 ? 10 : e.start - now < DAY ? 30 : 120) * 6e4);
   due.sort((a, b) => a.start - b.start);
   await pool(due.slice(0, 600), 3, async (ev) => {
     ev.fsAt = Date.now();
@@ -536,8 +582,10 @@ async function fsSweep() {
     if (o && cur && cur.state === 'pre') { cur.src = { ...cur.src, fs: o }; build(cur); }
     await new Promise((r) => setTimeout(r, 250));
   });
-  fsStat = { matched, odds: open.filter((e) => e.src?.fs).length, at: Date.now() };
-  console.log(`Flashscore: ${matched} von ${open.length} Spielen zugeordnet, ${fsStat.odds} mit Quoten`);
+  const own = open.filter((e) => e.id.startsWith('fs'));
+  fsStat = { matched, odds: own.filter((e) => e.src?.fs).length, at: Date.now() };
+  lastSweep = Date.now();
+  console.log(`Flashscore: ${own.length} offene Spiele in ${fsCovered.size} Ligen, ${fsStat.odds} mit Quoten`);
   queueSave();
 }
 
@@ -594,7 +642,14 @@ function payload(need) {
   const known = new Set(LEAGUES.map((l) => l.slug));
   for (const ev of store.values()) {
     if (!need.has(ev.id) && (!known.has(ev.lg) || ev.start < now - 2 * DAY || ev.start > now + 10 * DAY || ev.done || ev.void || ev.state !== 'pre')) continue;
+    // Liga kommt von Flashscore: Spiele aus anderen Quellen nur noch für bestehende Wetten zeigen.
+    if (!need.has(ev.id) && fsCovered.has(ev.lg) && !ev.id.startsWith('fs')) continue;
     const { src, b365At, day, fsId, fsH, fsA, fsAt, ...pub } = ev;
+    // Alte Wette auf ein Spiel aus einer anderen Quelle: Resultat vom Flashscore-Zwilling nehmen.
+    const tw = fsId && !ev.id.startsWith('fs') && !ev.done && !ev.void && store.get('fs' + fsId);
+    if (tw && (tw.done || tw.void || tw.state !== 'pre')) {
+      for (const k of ['state', 'done', 'void', 'sh', 'sa', 'win', 'h1', 'et', 'ot', 'txt']) pub[k] = tw[k];
+    }
     // Modellquoten nur, wenn 24 Stunden vor dem Spiel immer noch kein Buchmacher Quoten hat.
     if (ev.book === 'Modell' && ev.start - now > DAY) { pub.m = {}; pub.cmp = {}; pub.wait = true; }
     events.push(pub);
@@ -697,7 +752,7 @@ tsStart({ upsert, dataDir: DATA, log: (m) => console.log(m) });
 })();
 // Flashscore läuft unabhängig: Liste alle 15 Minuten, Quoten je nach Abstand zum Anpfiff.
 (async () => {
-  await new Promise((r) => setTimeout(r, 20000)); // erst ESPN und TheSportsDB füllen lassen
+  await new Promise((r) => setTimeout(r, 2000));
   for (;;) {
     await fsSweep().catch((e) => console.log('Flashscore fehlgeschlagen:', e.message));
     await new Promise((r) => setTimeout(r, 3 * 60e3));

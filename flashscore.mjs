@@ -30,9 +30,52 @@ export async function fsList(sportId, day) {
     const f = {};
     for (const kv of rec.split('¬')) { const i = kv.indexOf('÷'); if (i > 0) f[kv.slice(0, i)] = kv.slice(i + 1); }
     if (f.ZA) lg = f.ZA;
-    if (f.AA && f.AE && f.AF && f.AD) out.push({ id: f.AA, start: +f.AD * 1000, home: f.AE, away: f.AF, hp: f.JA || '', ap: f.JB || '', st: +f.AB || 0, lg });
+    if (f.AA && f.AE && f.AF && f.AD) {
+      const n = (k) => (f[k] != null && f[k] !== '' && Number.isFinite(+f[k]) ? +f[k] : null);
+      out.push({
+        id: f.AA, start: +f.AD * 1000, home: f.AE, away: f.AF, hp: f.JA || '', ap: f.JB || '', st: +f.AB || 0, ac: +f.AC || 0, lg,
+        g: [n('AG'), n('AH')], rt: [n('AT'), n('AU')], h1: [n('BC'), n('BD')], win: f.AS === '1' || f.AS === '2' ? f.AS : null,
+        lh: f.OA ? IMG + f.OA : '', la: f.OB ? IMG + f.OB : '',
+      });
+    }
   }
   return out;
+}
+const IMG = 'https://www.flashscore.com/res/image/data/';
+
+// Flashscore-Ligenname («LAND: Liga» oder «LAND: Liga - Runde») -> unsere Liga.
+const FS_LEAGUES = {
+  'sui.1': 'SWITZERLAND: Super League', 'sui.2': 'SWITZERLAND: Challenge League', 'sui.cup': 'SWITZERLAND: Swiss Cup',
+  'ita.1': 'ITALY: Serie A', 'ita.2': 'ITALY: Serie B', 'ita.coppa_italia': 'ITALY: Coppa Italia',
+  'ita.c.a': 'ITALY: Serie C - Group A', 'ita.c.b': 'ITALY: Serie C - Group B', 'ita.c.c': 'ITALY: Serie C - Group C', 'ita.d.i': 'ITALY: Serie D - Group I',
+  'arg.1': 'ARGENTINA: Liga Profesional', 'arg.2': 'ARGENTINA: Primera Nacional', 'arg.3': 'ARGENTINA: Primera B', 'arg.4': 'ARGENTINA: Primera C', 'arg.5': 'ARGENTINA: Primera D',
+  'arg.copa': 'ARGENTINA: Copa Argentina', 'arg.copa_de_la_superliga': 'ARGENTINA: Copa de la Liga Profesional', 'arg.trofeo_de_la_campeones': 'ARGENTINA: Trofeo de Campeones', 'arg.supercopa': 'ARGENTINA: Supercopa Argentina',
+  'ger.1': 'GERMANY: Bundesliga', 'ger.2': 'GERMANY: 2. Bundesliga', 'ger.dfb_pokal': 'GERMANY: DFB Pokal',
+  'eng.1': 'ENGLAND: Premier League', 'eng.2': 'ENGLAND: Championship', 'eng.3': 'ENGLAND: League One', 'eng.4': 'ENGLAND: League Two', 'eng.5': 'ENGLAND: National League', 'eng.fa': 'ENGLAND: FA Cup', 'eng.league_cup': 'ENGLAND: EFL Cup',
+  'esp.1': 'SPAIN: LaLiga', 'esp.2': 'SPAIN: LaLiga2', 'esp.copa_del_rey': 'SPAIN: Copa del Rey',
+  'fra.1': 'FRANCE: Ligue 1', 'fra.2': 'FRANCE: Ligue 2', 'ned.1': 'NETHERLANDS: Eredivisie', 'ned.2': 'NETHERLANDS: Eerste Divisie',
+  'por.1': 'PORTUGAL: Liga Portugal', 'bel.1': 'BELGIUM: Jupiler Pro League', 'aut.1': 'AUSTRIA: Bundesliga', 'tur.1': 'TURKEY: Super Lig', 'gre.1': 'GREECE: Super League',
+  'sco.1': 'SCOTLAND: Premiership', 'sco.2': 'SCOTLAND: Championship', 'den.1': 'DENMARK: Superliga', 'swe.1': 'SWEDEN: Allsvenskan', 'nor.1': 'NORWAY: Eliteserien', 'rus.1': 'RUSSIA: Premier League',
+  'bra.1': 'BRAZIL: Serie A', 'bra.2': 'BRAZIL: Serie B', 'uru.1': 'URUGUAY: Liga AUF Uruguaya', 'chi.1': 'CHILE: Liga de Primera', 'col.1': 'COLOMBIA: Primera A', 'per.1': 'PERU: Liga 1',
+  'par.1': 'PARAGUAY: Copa de Primera', 'ecu.1': 'ECUADOR: Liga Pro', 'ven.1': 'VENEZUELA: Liga FUTVE', 'bol.1': 'BOLIVIA: Division Profesional', 'mex.1': 'MEXICO: Liga MX', 'usa.1': 'USA: MLS',
+  'jpn.1': 'JAPAN: J1 League', 'chn.1': 'CHINA: Super League', 'ksa.1': 'SAUDI ARABIA: Saudi Professional League', 'aus.1': 'AUSTRALIA: A-League', 'rsa.1': 'SOUTH AFRICA: Betway Premiership',
+  'uefa.champions': 'EUROPE: Champions League', 'uefa.europa': 'EUROPE: Europa League', 'uefa.europa.conf': 'EUROPE: Conference League',
+  'uefa.nations': 'EUROPE: UEFA Nations League', 'uefa.euroq': 'EUROPE: Euro - Qualification', 'fifa.worldq.uefa': 'EUROPE: World Championship - Qualification',
+  'fifa.worldq.conmebol': 'SOUTH AMERICA: World Championship - Qualification', 'fifa.worldq.concacaf': 'NORTH & CENTRAL AMERICA: World Championship - Qualification',
+  'fifa.worldq.afc': 'ASIA: World Championship - Qualification', 'fifa.worldq.caf': 'AFRICA: World Championship - Qualification',
+  'concacaf.nations.league': 'NORTH & CENTRAL AMERICA: CONCACAF Nations League', 'fifa.friendly': 'WORLD: Friendly International',
+  'uefa.nations.w': 'EUROPE: UEFA Nations League Women', 'fifa.friendly.w': 'WORLD: Friendly International Women',
+  'conmebol.libertadores': 'SOUTH AMERICA: Copa Libertadores', 'conmebol.sudamericana': 'SOUTH AMERICA: Copa Sudamericana',
+  nhl: 'USA: NHL', 'sui.nl': 'SWITZERLAND: National League', 'sui.sl': 'SWITZERLAND: Swiss League', 'swe.shl': 'SWEDEN: SHL', 'nor.ehl': 'NORWAY: EHL', 'rus.khl': 'RUSSIA: KHL',
+  nba: 'USA: NBA', wnba: 'USA: WNBA', 'mens-college-basketball': 'USA: NCAA', nbl: 'AUSTRALIA: NBL',
+};
+const FS_SPORT_OF = (slug) => (/^(nhl|sui\.nl|sui\.sl|swe\.shl|nor\.ehl|rus\.khl)$/.test(slug) ? 'eishockey' : /^(nba|wnba|mens-college-basketball|nbl)$/.test(slug) ? 'basketball' : 'fussball');
+export function fsLeague(sport, name) {
+  if (sport === 'tennis') return /^ATP - SINGLES:/.test(name) ? 'atp' : /^WTA - SINGLES:/.test(name) ? 'wta' : null;
+  for (const [slug, key] of Object.entries(FS_LEAGUES)) {
+    if (FS_SPORT_OF(slug) === sport && (name === key || name.startsWith(key + ' - '))) return slug;
+  }
+  return null;
 }
 
 /* ---------- Zuordnung zu unseren Spielen ---------- */
