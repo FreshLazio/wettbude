@@ -1,7 +1,8 @@
 import { evalLeg, settleBet } from './settle.js';
 
 const LS = 'wettbude.v1', START = 500, MIN = 0.5;
-const SPORTS = [['fussball', 'Fussball'], ['tennis', 'Tennis'], ['eishockey', 'Eishockey'], ['basketball', 'Basketball']];
+const SPORTS = [['fussball', 'Fussball'], ['tennis', 'Tennis'], ['eishockey', 'Eishockey'], ['basketball', 'Basketball'], ['amfootball', 'American Football'], ['rugby', 'Rugby']];
+const POINTS = new Set(['basketball', 'amfootball', 'rugby']);
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const chf = (n) => n.toLocaleString('de-CH', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
@@ -80,7 +81,7 @@ function pickLabel(e, m, p, line) {
   if (m === 'dnb') return team;
   if (m === 'h1') return `1. Halbzeit: ${team}`;
   if (m.startsWith('h1ou')) return `1. Halbzeit ${ou} Tore`;
-  if (m.startsWith('ou')) return Ou + (e.sport === 'basketball' ? ' Punkte' : ' Tore');
+  if (m.startsWith('ou')) return Ou + (POINTS.has(e.sport) ? ' Punkte' : ' Tore');
   if (m.startsWith('th')) return `${H} ${ou} Tore`;
   if (m.startsWith('ta')) return `${A} ${ou} Tore`;
   if (m === 'btts') return p === 'J' ? 'Beide Teams treffen' : 'Nicht beide Teams treffen';
@@ -244,7 +245,7 @@ setInterval(() => {
 
 function img(t) { return t.l ? `<img src="${esc(t.l)}" alt="" loading="lazy" onerror="this.remove()">` : ''; }
 
-const mainOf = (e) => (e.sport === 'fussball' || (e.sport === 'eishockey' && (e.m?.['1x2'] || e.wait)) ? '1x2' : 'ml');
+const mainOf = (e) => (e.sport === 'fussball' || (e.sport === 'eishockey' && (e.m?.['1x2'] || e.wait)) || (e.sport === 'rugby' && e.m?.['1x2']) ? '1x2' : 'ml');
 
 function evRow(e) {
   const main = mainOf(e);
@@ -280,7 +281,7 @@ function extraHtml(e) {
     if (!keys.length) return;
     h += `<div class="mk">${head(title, keys.every((k) => M[k].O.b === M[keys[0]].O.b) ? M[keys[0]].O.b : (keys.map((k) => M[k].O.b).find((b) => b !== 'berechnet') || e.book) + ', übrige Linien berechnet')}<div class="lines">${keys.map((k) => `<div class="odds">${oddBtn(e, k, 'O', `Über ${M[k].line} ${unit}`)}${oddBtn(e, k, 'U', `Unter ${M[k].line} ${unit}`)}${M[k].O.b !== 'berechnet' && keys.length > 1 ? `<span class="chip">${esc(M[k].O.b)}</span>` : ''}</div>`).join('')}</div></div>`;
   };
-  const unit = e.sport === 'basketball' ? 'Punkte' : 'Tore';
+  const unit = POINTS.has(e.sport) ? 'Punkte' : 'Tore';
   if (mainOf(e) === '1x2' && e.sport === 'eishockey') mk('ml', ['1', '2'], 'Sieger inkl. Verlängerung und Penaltyschiessen');
   mk('dc', ['1X', '12', 'X2']);
   mk('dnb', ['1', '2']);
@@ -396,7 +397,7 @@ const P = { list: null, at: 0, sel: null, detail: null, err: '' };
 async function loadPlayers(force) {
   if (!S.tok || (!force && P.list && Date.now() - P.at < 60e3)) return;
   P.at = Date.now();
-  try { P.list = (await api('players')).list; P.err = ''; } catch (e) { P.err = e.message; }
+  try { const r = await api('players'); P.list = r.list; P.admin = !!r.admin; P.err = ''; } catch (e) { P.err = e.message; }
   if (V.tab === 'spieler') renderPlayers();
 }
 async function loadPlayer(name) {
@@ -431,7 +432,7 @@ function renderPlayers() {
     if (!d) { $('#main').innerHTML = `<button class="back" data-act="plBack">← Alle Spieler</button><p class="empty">${P.err ? esc(P.err) : 'Wird geladen …'}</p>`; return; }
     const open = d.bets.filter((b) => b.status === 'open'), done = d.bets.filter((b) => b.status !== 'open');
     $('#main').innerHTML = `<button class="back" data-act="plBack">← Alle Spieler</button>
-      <div class="lgHead"><h3>${esc(d.name)}</h3><span>Start mit CHF ${chf(d.start)}</span></div>
+      <div class="lgHead"><h3>${esc(d.name)}</h3><span>Start mit CHF ${chf(d.start)}</span>${P.admin ? `<button class="gift" data-act="gift" data-n="${esc(d.name)}">Geld geben</button>` : ''}</div>
       <div class="stats">
         <div class="stat"><span>Gewinn gesamt</span>${signed(d.profit)}</div>
         <div class="stat"><span>Letzte 7 Tage</span>${signed(d.week)}</div>
@@ -446,7 +447,7 @@ function renderPlayers() {
     return;
   }
   if (!P.list) { $('#main').innerHTML = `<p class="empty">${P.err ? esc(P.err) : 'Spieler werden geladen …'}</p>`; return; }
-  $('#main').innerHTML = `<div class="lgHead"><h3>Spieler</h3><span>${P.list.length} Profile · Gewinn = Guthaben plus offene Einsätze minus Startbudget</span></div>
+  $('#main').innerHTML = `<div class="lgHead"><h3>Spieler</h3><span>${P.list.length} Profile · Rangliste nach Guthaben · Gesamt = Guthaben plus offene Einsätze minus Startbudget</span></div>
     <div class="list players">${P.list.map((p, i) => `<button class="pl ${p.name === S.name ? 'me' : ''}" data-act="pl" data-n="${esc(p.name)}">
       <span class="rank">${i + 1}</span>
       <span class="who"><b>${esc(p.name)}${p.name === S.name ? ' (du)' : ''}</b><small>${p.won} gewonnen · ${p.lost} verloren${p.open ? ` · ${p.open} offen` : ''}</small></span>
@@ -598,7 +599,7 @@ function renderSums() {
 function renderTop() {
   $('#bal').textContent = chf(S.bal);
   const who = S.tok ? S.name || '' : '';
-  if ($('#who').dataset.n !== who) { $('#who').dataset.n = who; $('#who').innerHTML = who ? `${esc(who)}<button data-act="logout" title="Abmelden">Abmelden</button>` : ''; }
+  if ($('#who').dataset.n !== who) { $('#who').dataset.n = who; $('#who').innerHTML = who ? `<button data-act="rename" class="wname" title="Namen ändern">${esc(who)} ✎</button><button data-act="logout" title="Abmelden">Abmelden</button>` : ''; }
   const n = S.bets.filter((b) => b.status === 'open').length;
   $('#openCount').textContent = n || '';
   document.querySelectorAll('.tabs button').forEach((b) => b.classList.toggle('on', b.dataset.tab === V.tab));
@@ -735,6 +736,30 @@ document.addEventListener('click', (ev) => {
     // Profil bleibt, nur Guthaben und Wetten weg; danach Budget neu wählen.
     S = { ...S, bal: START, bets: [], slip: [], seq: 1, pick: true };
     save();
+  }
+  else if (a === 'gift') {
+    const who = b.dataset.n;
+    const x = parseFloat(String(prompt(`Wie viel CHF soll ${who} bekommen?`, '100') || '').replace(',', '.'));
+    if (!(x > 0)) return;
+    if (!confirm(`${who} CHF ${chf(x)} geben?`)) return;
+    api('gift', { method: 'POST', body: JSON.stringify({ name: who, amount: x }) }).then((r) => {
+      toast(`${r.name} hat jetzt CHF ${chf(r.bal)}`);
+      P.list = null; loadPlayers(true); loadPlayer(who);
+      if (r.name === S.name) pull();
+    }).catch((e) => toast(e.message));
+    return;
+  }
+  else if (a === 'rename') {
+    const n = (prompt('Neuer Name (2 bis 20 Zeichen). Das Passwort bleibt gleich.', S.name) || '').trim();
+    if (!n || n === S.name) return;
+    api('rename', { method: 'POST', body: JSON.stringify({ name: n }) }).then((r) => {
+      // Ungespeicherte Wetten auf diesem Gerät behalten, sonst den Serverstand übernehmen.
+      if (dirty || pushing) { S.name = r.name; S.rev = r.rev; saveLocal(); render(); pushSoon(); }
+      else adopt(r.rev, r.state);
+      P.list = null;
+      toast('Name geändert: ' + r.name);
+    }).catch((e) => toast(e.message));
+    return;
   }
   else if (a === 'logout') {
     if (!confirm('Abmelden? Mit Name und Passwort kommst du jederzeit wieder in dein Profil.')) return;

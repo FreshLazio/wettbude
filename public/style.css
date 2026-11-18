@@ -140,6 +140,7 @@ button.odd:hover:not(:disabled) { border-color: var(--pine); }
 .dbar .down { background: var(--lose); border-radius: 0 0 3px 3px; }
 .day small { color: var(--mut); font-size: 11px; }
 .day .none { color: #c4c1b3; }
+.lgHead .gift { margin-left: auto; padding: 5px 12px; border-radius: 8px; background: var(--amber); color: #1d1d1d; font-weight: 700; font-size: 13px; }
 .back { margin-bottom: 12px; padding: 6px 12px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); font-weight: 600; }
 .secHead { margin: 18px 4px 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--mut); }
 @media (max-width: 600px) {
@@ -233,6 +234,8 @@ button.odd:hover:not(:disabled) { border-color: var(--pine); }
 .modeTabs button.on { background: var(--pine); color: #fff; }
 #who button { margin-left: 8px; padding: 3px 8px; border-radius: 6px; background: var(--pine2); color: var(--pineMut); font-size: 12px; font-weight: 600; }
 #who button:hover { color: #fff; }
+#who button.wname { margin-left: 0; padding: 3px 6px; background: none; color: inherit; font-size: inherit; max-width: 160px; overflow: hidden; text-overflow: ellipsis; }
+#who button.wname:hover { background: var(--pine2); }
 .dots { display: flex; gap: 6px; }
 .dots i { width: 22px; height: 4px; border-radius: 2px; background: var(--line); }
 .dots i.on { background: var(--amber); }
@@ -279,4 +282,5 @@ button.odd:hover:not(:disabled) { border-color: var(--pine); }
   .tabs button { padding: 0 8px; }
   #who { font-size: 0; } /* am Handy aus Platzgründen nur der Abmelden-Knopf */
   #who button { font-size: 12px; margin-left: 0; }
+  #who button.wname { max-width: 90px; }
 }
