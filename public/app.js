@@ -1,4 +1,5 @@
-import { evalLeg, settleBet } from './settle.js';
+import { evalLeg, settleBet, betOdds } from './settle.js';
+import { combinable, groupOdds } from './builder.js';
 
 const LS = 'wettbude.v1', START = 500, MIN = 0.5;
 const SPORTS = [['fussball', 'Fussball'], ['tennis', 'Tennis'], ['eishockey', 'Eishockey'], ['basketball', 'Basketball'], ['amfootball', 'American Football'], ['rugby', 'Rugby']];
@@ -179,8 +180,13 @@ function togglePick(k) {
   const i = S.slip.findIndex((s) => s.ev === ev && s.m === m && s.p === p);
   if (i >= 0) S.slip.splice(i, 1);
   else {
-    // Pro Spiel nur ein Tipp: ein neuer ersetzt den alten.
-    S.slip = S.slip.filter((s) => s.ev !== ev);
+    // Gleiches Spiel: im gleichen Markt ersetzt der neue Tipp den alten. Verschiedene Tormärkte
+    // im Fussball (1X2, Doppelte Chance, Über/Unter, Beide treffen, Resultat) lassen sich kombinieren.
+    const e = byId.get(ev);
+    const same = S.slip.filter((s) => s.ev === ev && s.m !== m);
+    const ok = combinable(e, m) && same.every((s) => combinable(e, s.m));
+    if (same.length && !ok) toast('Dieser Markt lässt sich nicht mit anderen Tipps aus demselben Spiel kombinieren. Der alte Tipp wurde ersetzt.');
+    S.slip = S.slip.filter((s) => s.ev !== ev || (ok && s.m !== m));
     S.slip.push({ ev, m, p });
   }
   V.warn = '';
@@ -191,15 +197,28 @@ function totals() {
   const items = slipItems();
   const kombi = items.length > 1 && S.mode === 'kombi';
   const stake = Math.max(0, +S.stake || 0);
-  const odds = items.reduce((x, i) => x * (i.sel?.o || 1), 1);
+  // Kombi: Tipps aus demselben Spiel bilden eine Gruppe mit eigener (korrigierter) Quote.
+  const groups = new Map();
+  if (kombi) for (const i of items) if (i.ok) groups.set(i.ev, [...(groups.get(i.ev) || []), i]);
+  const gf = {}, gInfo = [];
+  let gErr = '';
+  for (const [ev, list] of groups) {
+    if (list.length < 2) continue;
+    const r = groupOdds(list[0].e, list.map((i) => ({ m: i.m, p: i.p, line: i.line, o: i.sel.o })));
+    if (r.err) { gErr = r.err; continue; }
+    gf[ev] = r.f;
+    gInfo.push({ match: `${list[0].e.home.n} – ${list[0].e.away.n}`, n: list.length, odds: r.odds, prod: list.reduce((x, i) => x * i.sel.o, 1) });
+  }
+  const odds = items.reduce((x, i) => x * (i.sel?.o || 1), 1) * Object.values(gf).reduce((x, f) => x * f, 1);
   const total = kombi ? stake : stake * items.length;
   const win = kombi ? stake * odds : items.reduce((x, i) => x + stake * (i.sel?.o || 0), 0);
   let err = '';
   if (!items.length) err = ' ';
   else if (items.some((i) => !i.ok)) err = 'Entferne die gesperrten Tipps.';
+  else if (gErr) err = gErr;
   else if (stake < MIN) err = `Mindesteinsatz CHF ${chf(MIN)}.`;
   else if (total > S.bal + 1e-9) err = 'Guthaben reicht nicht.';
-  return { items, kombi, stake, odds, total, win, err };
+  return { items, kombi, stake, odds, total, win, err, gf, gInfo };
 }
 
 function place() {
@@ -211,7 +230,7 @@ function place() {
     match: `${i.e.home.n} – ${i.e.away.n}`, lg: lgBy.get(i.e.lg)?.name || '', start: i.e.start, res: null,
   });
   const mk = (legs, stake) => ({ id: S.seq++, t: Date.now(), stake: r2(stake), legs, status: 'open', payout: 0 });
-  if (t.kombi) S.bets.push(mk(t.items.map(leg), t.stake));
+  if (t.kombi) S.bets.push({ ...mk(t.items.map(leg), t.stake), ...(Object.keys(t.gf).length ? { gf: t.gf } : {}) });
   else for (const i of t.items) S.bets.push(mk([leg(i)], t.stake));
   S.bal = r2(S.bal - t.total);
   S.slip = []; V.warn = '';
@@ -384,12 +403,19 @@ function legState(l) {
   return 'gesperrt, Resultat folgt';
 }
 
+// Offene Wetten: die, deren nächstes noch offenes Spiel am frühesten beginnt, zuerst.
+const nextStart = (b) => Math.min(...b.legs.filter((l) => !l.res).map((l) => l.start || Infinity), Infinity);
+const byKickoff = (list) => list.slice().sort((a, b) => nextStart(a) - nextStart(b) || a.t - b.t);
+
 function betCard(b) {
-  const odds = b.legs.reduce((x, l) => x * l.o, 1);
+  const odds = betOdds(b);
   const label = { open: 'Offen', won: 'Gewonnen', lost: 'Verloren', void: 'Ungültig' }[b.status];
+  // Offene Kombi: wie viele Tipps schon richtig sind
+  const ok = b.legs.filter((l) => l.res === 'won').length;
+  const prog = b.status === 'open' && b.legs.length > 1 && ok ? `<small class="prog">${ok} von ${b.legs.length} richtig</small>` : '';
   return `<div class="bet">
-    <div class="betHead"><div><b>${b.legs.length > 1 ? `Kombi ${b.legs.length}-fach` : 'Einzelwette'}</b><small>${new Date(b.t).toLocaleString('de-CH', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</small></div><span class="badge ${b.status}">${label}</span></div>
-    ${b.legs.map((l) => `<div class="leg"><i class="dot ${l.res || ''}"></i><div><b>${esc(l.pick)}</b><small>${esc(l.mk)} · ${esc(l.match)}${l.lg ? ' · ' + esc(l.lg) : ''}</small><small>${l.res ? 'Resultat ' + esc(l.score) + (l.res === 'void' ? ' · ungültig, Quote 1.00' : '') : legState(l)}</small></div><span class="q">${q(l.o)}</span></div>`).join('')}
+    <div class="betHead"><div>${b.who ? `<b class="who">${esc(b.who)}</b>` : ''}<b>${b.legs.length > 1 ? `Kombi ${b.legs.length}-fach` : 'Einzelwette'}</b><small>${new Date(b.t).toLocaleString('de-CH', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</small>${prog}</div><span class="badge ${b.status}">${label}</span></div>
+    ${b.legs.map((l) => `<div class="leg ${l.res || ''}"><i class="dot ${l.res || ''}"></i><div><b>${esc(l.pick)}</b><small>${esc(l.mk)} · ${esc(l.match)}${l.lg ? ' · ' + esc(l.lg) : ''}</small><small>${l.res ? 'Resultat ' + esc(l.score) + (l.res === 'void' ? ' · ungültig, Quote 1.00' : '') : legState(l)}</small></div><span class="q">${q(l.o)}</span></div>`).join('')}
     <div class="betFoot"><div><span>Einsatz</span><b>CHF ${chf(b.stake)}</b></div><div><span>Gesamtquote</span><b>${q(odds)}</b></div><div><span>${b.status === 'open' ? 'Möglicher Gewinn' : 'Auszahlung'}</span><b class="${b.status === 'won' ? 'pos' : ''}">CHF ${chf(b.status === 'open' ? b.stake * odds : b.payout)}</b></div></div>
   </div>`;
 }
@@ -400,7 +426,7 @@ const P = { list: null, at: 0, sel: null, detail: null, err: '' };
 async function loadPlayers(force) {
   if (!S.tok || (!force && P.list && Date.now() - P.at < 60e3)) return;
   P.at = Date.now();
-  try { const r = await api('players'); P.list = r.list; P.admin = !!r.admin; P.err = ''; } catch (e) { P.err = e.message; }
+  try { const r = await api('players'); P.list = r.list; P.next = r.upcoming || []; P.admin = !!r.admin; P.err = ''; } catch (e) { P.err = e.message; }
   if (V.tab === 'spieler') renderPlayers();
 }
 async function loadPlayer(name) {
@@ -447,7 +473,7 @@ function renderPlayers() {
       ${dayBars(done)}
       <h4 class="secHead">Abgerechnet in den letzten 7 Tagen (${done.length})</h4>
       <div class="bets">${done.map(betCard).join('') || '<p class="empty">Keine abgerechneten Wetten in den letzten 7 Tagen.</p>'}</div>
-      ${open.length ? `<h4 class="secHead">Noch offen (${open.length})</h4><div class="bets">${open.map(betCard).join('')}</div>` : ''}`;
+      ${open.length ? `<h4 class="secHead">Noch offen (${open.length})</h4><div class="bets">${byKickoff(open).map(betCard).join('')}</div>` : ''}`;
     return;
   }
   if (!P.list) { $('#main').innerHTML = `<p class="empty">${P.err ? esc(P.err) : 'Spieler werden geladen …'}</p>`; return; }
@@ -458,7 +484,9 @@ function renderPlayers() {
       <span class="nums"><span class="num"><small>Guthaben</small><b>CHF ${chf(p.bal)}</b></span>
       <span class="num"><small>Offen</small>${p.stakeOpen ? `<b>CHF ${chf(p.stakeOpen)}</b><small class="pos">bis +${chf(r2(p.maxWin - p.stakeOpen))}</small>` : '<b class="none">–</b>'}</span>
       <span class="num"><small>Gesamt</small>${signed(p.profit)}</span></span>
-    </button>`).join('')}</div>`;
+    </button>`).join('')}</div>
+    <h4 class="secHead">Nächste Wetten aller Spieler${P.next?.length ? ` (${P.next.length})` : ''}</h4>
+    <div class="bets">${(P.next || []).map(betCard).join('') || '<p class="empty">Gerade hat niemand offene Wetten.</p>'}</div>`;
 }
 
 function renderMine() {
@@ -466,7 +494,7 @@ function renderMine() {
   const done = S.bets.filter((b) => b.status !== 'open');
   const net = done.reduce((x, b) => x + b.payout - b.stake, 0);
   const broke = S.bal < MIN && !open.length;
-  const list = (V.filter === 'open' ? open : done).slice().sort((a, b) => (b.done || b.t) - (a.done || a.t));
+  const list = V.filter === 'open' ? byKickoff(open) : done.slice().sort((a, b) => (b.done || b.t) - (a.done || a.t));
   $('#main').innerHTML = `
     ${broke ? `<div class="banner"><span>Dein Guthaben ist aufgebraucht.</span><button data-act="reset" data-sure="1">Neu starten</button></div>` : ''}
     <div class="stats">
@@ -594,7 +622,8 @@ function renderSums() {
   const el = $('#sums');
   if (!el) return;
   const t = totals();
-  el.innerHTML = `${t.kombi ? `<div class="sum"><span>Gesamtquote (${t.items.length} Tipps)</span><b>${q(t.odds)}</b></div>` : ''}
+  el.innerHTML = `${t.gInfo.map((g) => `<div class="sum same"><span>Gleiches Spiel: ${esc(g.match)} (${g.n} Tipps)<small>Quote angepasst, weil die Tipps zusammenhängen (einzeln multipliziert ${q(g.prod)})</small></span><b>${q(g.odds)}</b></div>`).join('')}
+    ${t.kombi ? `<div class="sum"><span>Gesamtquote (${t.items.length} Tipps)</span><b>${q(t.odds)}</b></div>` : ''}
     <div class="sum"><span>Einsatz total</span><b>CHF ${chf(t.total)}</b></div>
     <div class="sum big"><span>Möglicher Gewinn</span><b>CHF ${chf(t.win)}</b></div>`;
   const go = $('#slip .go');

@@ -105,7 +105,7 @@ export function accounts({ dataDir }) {
       name: u.name, start, bal, open: open.length, resets: u.resets || 0,
       // Geld in offenen Wetten und was sie höchstens auszahlen (Einsatz × Quote)
       stakeOpen: Math.round(stakeOpen * 100) / 100,
-      maxWin: Math.round(open.reduce((x, b) => x + (+b.stake || 0) * (b.legs || []).reduce((q, l) => q * (+l.o || 1), 1), 0) * 100) / 100,
+      maxWin: Math.round(open.reduce((x, b) => x + (+b.stake || 0) * (b.legs || []).reduce((q, l) => q * (+l.o || 1), 1) * Object.values(b.gf || {}).reduce((q, f) => q * (+f || 1), 1), 0) * 100) / 100,
       profit: Math.round((bal + stakeOpen - start) * 100) / 100,
       won: bets.filter((b) => b.status === 'won').length, lost: bets.filter((b) => b.status === 'lost').length,
       week: Math.round(recent.reduce((x, b) => x + (b.payout || 0) - b.stake, 0) * 100) / 100,
@@ -117,19 +117,28 @@ export function accounts({ dataDir }) {
     async players(token) {
       const [me] = await user(token);
       const admin = me === ADMIN;
-      if (board && Date.now() - board.at < 60e3) return { list: board.list, admin };
+      if (board && Date.now() - board.at < 60e3) return { list: board.list, upcoming: board.upcoming, admin };
       // Alle Profile: in Upstash per SCAN über «wb:user:*», lokal alle Schlüssel der Datei.
       const keys = [];
       if (remote) {
         let cur = '0';
         do { const [next, found] = await cmd(['SCAN', cur, 'MATCH', 'wb:user:*', 'COUNT', '200']); cur = String(next); keys.push(...found.map((x) => x.slice(3))); } while (cur !== '0' && keys.length < 5000);
       } else keys.push(...Object.keys(store()).filter((x) => x.startsWith('user:')));
-      const list = [];
-      for (const k of keys) { const u = await get(k); if (u && !u.moved) list.push(summary(u)); }
+      const list = [], next = [];
+      // Nächster Anpfiff eines Scheins: frühester Start der noch offenen Tipps
+      const kick = (b) => Math.min(...(b.legs || []).filter((l) => !l.res).map((l) => +l.start || Infinity), Infinity);
+      for (const k of keys) {
+        const u = await get(k);
+        if (!u || u.moved) continue;
+        list.push(summary(u));
+        for (const b of u.state?.bets || []) if (b.status === 'open') next.push({ ...b, who: u.name, k: kick(b) });
+      }
       // Rangliste nach Geld (Guthaben), bei Gleichstand nach Gewinn
       list.sort((a, b) => b.bal - a.bal || b.profit - a.profit);
-      board = { at: Date.now(), list };
-      return { list, admin };
+      // Offene Wetten aller Spieler, die nächste zuerst (höchstens 60)
+      const upcoming = next.sort((a, b) => a.k - b.k || a.t - b.t).slice(0, 60).map(({ k, ...b }) => b);
+      board = { at: Date.now(), list, upcoming };
+      return { list, upcoming, admin };
     },
     // Nur der Admin (Rafael) kann anderen Geld geben. Das Startbudget steigt mit, damit es nicht als Gewinn zählt.
     async gift(token, { name, amount }) {

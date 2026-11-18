@@ -112,6 +112,8 @@ button.odd:hover:not(:disabled) { border-color: var(--pine); }
 .sum { display: flex; justify-content: space-between; padding: 3px 0; color: var(--mut); font-variant-numeric: tabular-nums; }
 .sum b { color: var(--ink); }
 .sum.big b { font-size: 17px; color: var(--pine); }
+.sum.same { gap: 10px; margin-bottom: 4px; padding: 6px 8px; border-radius: 8px; background: #fdf5e2; color: var(--ink); font-size: 13px; }
+.sum.same small { display: block; color: var(--mut); font-size: 11px; }
 .go { width: 100%; margin-top: 12px; padding: 13px; border-radius: 10px; background: var(--amber); color: var(--amberInk); font-weight: 800; font-size: 15px; }
 .go:disabled { opacity: .45; }
 .warn { margin-top: 8px; font-size: 12px; color: var(--lose); min-height: 16px; }
@@ -176,6 +178,14 @@ button.odd:hover:not(:disabled) { border-color: var(--pine); }
 .dot { width: 10px; height: 10px; border-radius: 50%; background: #cfcdc2; }
 .dot.won { background: var(--win); } .dot.lost { background: var(--lose); } .dot.void { background: var(--amber); }
 .leg .q { font-weight: 700; font-variant-numeric: tabular-nums; }
+/* Tipps mit Resultat: richtig grün, falsch rot */
+.leg.won { background: #e9f6ee; }
+.leg.won > div > b { color: var(--win); }
+.leg.won > div > b::before { content: "✓ "; }
+.leg.lost { background: #fbeceA; }
+.leg.lost > div > b { color: var(--lose); }
+.leg.lost > div > b::before { content: "✗ "; }
+.betHead small.prog { display: inline-block; margin-left: 8px; padding: 1px 8px; border-radius: 10px; background: #dff3e6; color: var(--win); font-weight: 700; }
 .betFoot { display: flex; gap: 24px; padding: 10px 14px; background: #faf9f5; border-top: 1px solid var(--line); font-variant-numeric: tabular-nums; }
 .betFoot span { color: var(--mut); font-size: 12px; display: block; }
 .reset { margin-top: 8px; padding: 8px 14px; border-radius: 8px; border: 1px solid var(--line); color: var(--mut); background: var(--card); }
@@ -308,3 +318,6 @@ button.odd:hover:not(:disabled) { border-color: var(--pine); }
   #who button { font-size: 12px; margin-left: 0; }
   #who button.wname { max-width: 110px; font-size: 13px; color: #fff; }
 }
+
+/* Nächste Wetten aller Spieler: Name vor dem Schein */
+.betHead b.who { background: #163d2b; color: #fff; padding: 2px 8px; border-radius: 6px; margin-right: 6px; font-size: 13px; }

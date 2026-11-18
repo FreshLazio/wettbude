@@ -54,11 +54,22 @@ export function evalLeg(leg, ev) {
   return 'void';
 }
 
+// Gesamtquote eines Scheins. gf = Korrektur pro Spiel bei mehreren Tipps aus demselben Spiel
+// (Wettbauer); sie gilt nur, wenn alle Tipps dieses Spiels gewonnen haben.
+export function betOdds(bet, settled = false) {
+  let odds = bet.legs.reduce((p, l) => p * (!settled || l.res === 'won' ? l.o : 1), 1);
+  for (const [ev, f] of Object.entries(bet.gf || {})) {
+    const legs = bet.legs.filter((l) => l.ev === ev);
+    if (!settled || (legs.length > 1 && legs.every((l) => l.res === 'won'))) odds *= f;
+  }
+  return odds;
+}
+
 // Ergebnis eines Scheins, sobald es feststeht. Ungültige Tipps zählen mit Quote 1.
 export function settleBet(bet) {
   if (bet.legs.some((l) => l.res === 'lost')) return { status: 'lost', payout: 0 };
   if (bet.legs.some((l) => !l.res)) return null;
-  const odds = bet.legs.reduce((p, l) => p * (l.res === 'won' ? l.o : 1), 1);
+  const odds = betOdds(bet, true);
   const allVoid = bet.legs.every((l) => l.res === 'void');
   return { status: allVoid ? 'void' : 'won', payout: Math.round(bet.stake * odds * 100) / 100 };
 }
