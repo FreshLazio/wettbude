@@ -381,3 +381,25 @@ button.evCard:hover { border-color: #163d2b; }
 .hot .tw { background: #163d2b; color: #fff; font-size: 12px; font-weight: 600; padding: 1px 7px; border-radius: 6px; }
 @media (max-width: 600px) { .podium .medal { font-size: 22px; } .pod { padding: 8px 4px; font-size: 13px; } }
 @media (max-width: 600px) { .evGrid { grid-template-columns: 1fr 1fr; gap: 8px; } .evCard { flex-direction: column; gap: 4px; padding: 10px; } .evIcon { font-size: 20px; } .evCard strong { font-size: 16px; } }
+
+/* Kombi-Versicherung */
+.sum.ins { background: #f4f2ec; border-radius: 8px; padding: 8px 10px; }
+.sum.ins small { display: block; color: #777; font-size: 12px; font-weight: 400; margin-top: 2px; }
+.sum.ins.on { background: #e6f4ec; color: #14532d; font-weight: 600; }
+.betHead small.prog.shield { background: #e6eefc; color: #234a8c; }
+
+/* Systemwette und Kombi-Boost */
+.sysPick { display: flex; flex-wrap: wrap; gap: 6px; align-items: center; padding: 8px 12px; }
+.sysPick > span { width: 100%; font-size: 12px; color: #777; }
+.sysPick button { font: inherit; border: 1px solid #d9d5ca; background: #fff; border-radius: 8px; padding: 5px 10px; cursor: pointer; display: flex; flex-direction: column; align-items: center; line-height: 1.15; }
+.sysPick button small { font-size: 10px; color: #888; }
+.sysPick button.on { background: #163d2b; border-color: #163d2b; color: #fff; }
+.sysPick button.on small { color: #cfe3d6; }
+.sum.boost.on { background: #fff4df; color: #7a4b00; }
+.betHead small.prog.boost { background: #fff1d6; color: #8a5300; }
+
+/* Höchstgewinn */
+.betFoot small.cap { display: block; font-size: 10px; color: #b45309; }
+.sum.capWarn { background: #fff4df; border-radius: 8px; padding: 8px 10px; color: #7a4b00; }
+.sum.capWarn small { display: block; font-size: 12px; font-weight: 400; color: #8a6a3a; margin-top: 2px; }
+.players .num b, .players .num small { white-space: nowrap; }

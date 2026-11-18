@@ -6,6 +6,12 @@ import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 
+import { betOdds, capWin } from './public/settle.js';
+
+// Quote eines Scheins inkl. Wettbauer, Kombi-Boost und Systemwette (gleiche Rechnung wie in der App)
+const oddsOf = (b) => { try { return Array.isArray(b?.legs) && b.legs.length ? betOdds(b) : 1; } catch { return 1; } };
+// Möglicher Gewinn eines offenen Scheins, höchstens der Höchstgewinn
+const winOf = (b) => capWin((+b.stake || 0) * oddsOf(b));
 const MAX_STATE = 1_500_000; // Zeichen; reicht für Tausende Wetten
 const ADMIN = (process.env.WB_ADMIN || 'rafael').toLowerCase(); // darf Geld verteilen
 
@@ -106,17 +112,25 @@ export function accounts({ dataDir, enrich = (b) => b }) {
   // Rangliste aller Profile: Gewinn = Guthaben + offene Einsätze - Startbudget. 60 s zwischengespeichert.
   let board = null;
   const WEEK = 7 * 864e5;
-  const summary = (u) => {
-    const s = u.state || {}, bets = Array.isArray(s.bets) ? s.bets : [];
+  // live: ausgewertete Kopien. Schon entschiedene, beim Besitzer noch nicht ausbezahlte Scheine
+  // (pend) zählen hier bereits mit, damit Rangliste und Podest stimmen.
+  const summary = (u, live) => {
+    const s = u.state || {};
+    let bets = Array.isArray(s.bets) ? s.bets : [], extra = 0;
+    const pend = new Map((live || []).filter((b) => b.pend).map((b) => [b.id + '|' + b.t, b]));
+    if (pend.size) {
+      bets = bets.map((b) => pend.get(b.id + '|' + b.t) || b);
+      extra = [...pend.values()].reduce((x, b) => x + (b.payout || 0), 0);
+    }
     const open = bets.filter((b) => b.status === 'open');
-    const start = +s.start || 500, bal = +s.bal || 0;
+    const start = +s.start || 500, bal = Math.round(((+s.bal || 0) + extra) * 100) / 100;
     const stakeOpen = open.reduce((x, b) => x + (+b.stake || 0), 0);
     const recent = bets.filter((b) => b.status !== 'open' && (b.done || b.t) > Date.now() - WEEK);
     return {
       name: u.name, start, bal, open: open.length, resets: u.resets || 0,
       // Geld in offenen Wetten und was sie höchstens auszahlen (Einsatz × Quote)
       stakeOpen: Math.round(stakeOpen * 100) / 100,
-      maxWin: Math.round(open.reduce((x, b) => x + (+b.stake || 0) * (b.legs || []).reduce((q, l) => q * (+l.o || 1), 1) * Object.values(b.gf || {}).reduce((q, f) => q * (+f || 1), 1), 0) * 100) / 100,
+      maxWin: Math.round(open.reduce((x, b) => x + winOf(b), 0) * 100) / 100,
       profit: Math.round((bal + stakeOpen - start) * 100) / 100,
       won: bets.filter((b) => b.status === 'won').length, lost: bets.filter((b) => b.status === 'lost').length,
       week: Math.round(recent.reduce((x, b) => x + (b.payout || 0) - b.stake, 0) * 100) / 100,
@@ -126,7 +140,6 @@ export function accounts({ dataDir, enrich = (b) => b }) {
   // Trends der letzten 7 Tage über alle Spieler: meistgewettete Ligen und Teams, spannende Ereignisse.
   function trendsOf(all, people = []) {
     const now = Date.now(), r2 = (v) => Math.round(v * 100) / 100;
-    const oddsOf = (b) => (b.legs || []).reduce((q, l) => q * (+l.o || 1), 1) * Object.values(b.gf || {}).reduce((q, f) => q * (+f || 1), 1);
     const lg = new Map(), tm = new Map();
     const add = (m, k, x) => {
       if (!k) return;
@@ -163,11 +176,11 @@ export function accounts({ dataDir, enrich = (b) => b }) {
     b = max(lost.filter((x) => x.legs.length > 2 && x.legs.filter((l) => l.res === 'lost').length === 1 && x.legs.every((l) => l.res === 'won' || l.res === 'lost')), oddsOf);
     const miss = b?.legs.find((l) => l.res === 'lost');
     push('😖', 'Bitterste Niederlage', b, b && `Quote ${oddsOf(b).toFixed(2)}`, b && `nur «${miss.pick}» falsch (${miss.match})`);
-    b = max(lost, (x) => x.stake);
+    b = max(lost.filter((x) => !x.ins), (x) => x.stake);
     push('💸', 'Grösster Verlust', b, b && `−CHF ${r2(b.stake).toFixed(2)}`, b && legTxt(b));
     const openBets = all.filter((x) => x.status === 'open');
-    b = max(openBets, (x) => x.stake * oddsOf(x));
-    push('⏳', 'Grösster offener Schein', b, b && `bis CHF ${r2(b.stake * oddsOf(b)).toFixed(2)}`, b && legTxt(b));
+    b = max(openBets, winOf);
+    push('⏳', 'Grösster offener Schein', b, b && `bis CHF ${r2(winOf(b)).toFixed(2)}`, b && legTxt(b));
     // Spieler-Rekorde
     const per = new Map();
     for (const x of all) { const p = per.get(x.who) || { n: 0, w: 0, d: 0 }; p.n++; if (x.status === 'won') p.w++; if (x.status === 'won' || x.status === 'lost') p.d++; per.set(x.who, p); }
@@ -237,10 +250,10 @@ export function accounts({ dataDir, enrich = (b) => b }) {
       const kick = (b) => Math.min(...(b.legs || []).filter((l) => !l.res).map((l) => +l.start || Infinity), Infinity);
       for (const u of await getMany(keys)) {
         if (!u || u.moved) continue;
-        list.push(summary(u));
         const bets = Array.isArray(u.state?.bets) ? u.state.bets : [];
         // Kopien: offene Scheine und alles der letzten 7 Tage, offene mit bekannten Resultaten ausgewertet
         const mine = enrich(bets.filter((b) => b.status === 'open' || (b.done || b.t) > now - WEEK).map((b) => ({ ...structuredClone(b), who: u.name })));
+        list.push(summary(u, mine));
         for (const b of mine) {
           all.push(b);
           if (b.status === 'open') next.push({ ...b, k: kick(b) });
@@ -282,6 +295,29 @@ export function accounts({ dataDir, enrich = (b) => b }) {
         return { name: u.name, bal: u.state.bal };
       });
     },
+    // Nur Admin: ein Profil auf CHF 500 Start umrechnen. Alle Einsätze und Auszahlungen werden
+    // im selben Verhältnis verkleinert (Start 2000 → Faktor 0.25: CHF 500 Einsatz werden CHF 125).
+    // Geschenktes Geld bleibt, wie es ist.
+    async rescale(token, { name }) {
+      const [me] = await user(token);
+      if (me !== ADMIN) throw err(403, 'Nur der Admin kann das.');
+      const [tk] = await resolve(keyOf(name));
+      return locked(tk, async () => {
+        const u = await get('user:' + tk);
+        if (!u || u.moved) throw err(404, 'Diesen Spieler gibt es nicht.');
+        const s = u.state || {}, r = (v) => Math.round(v * 100) / 100;
+        const gifts = (s.gifts || []).reduce((x, g) => x + (+g.x || 0), 0);
+        const base = (+s.start || 500) - gifts;
+        if (base <= 0 || Math.abs(base - 500) < 0.01) throw err(400, 'Dieses Profil startet schon mit CHF 500.');
+        const f = 500 / base;
+        const bets = (s.bets || []).map((b) => ({ ...b, stake: r(b.stake * f), ...(b.payout != null ? { payout: r(b.payout * f) } : {}) }));
+        u.state = { ...s, bets, bal: r(((+s.bal || 0) - gifts) * f + gifts), start: r(500 + gifts), rescaled: [...(s.rescaled || []), { t: Date.now(), from: base }] };
+        u.rev++; u.at = Date.now();
+        await set('user:' + tk, u);
+        board = null;
+        return { name: u.name, bal: u.state.bal, f: r(f) };
+      });
+    },
     async player(token, name) {
       await user(token);
       const [, u] = await resolve(keyOf(name));
@@ -290,7 +326,8 @@ export function accounts({ dataDir, enrich = (b) => b }) {
       // Nur Wetten der letzten 7 Tage (abgerechnet oder noch offen), neueste zuerst.
       const bets = enrich((u.state?.bets || []).filter((b) => (b.done || b.t) > since || b.status === 'open')
         .sort((a, b) => (b.done || b.t) - (a.done || a.t)).slice(0, 200).map((b) => structuredClone(b)));
-      return { ...summary(u), bets };
+      const gifts = (u.state?.gifts || []).reduce((x, g) => x + (+g.x || 0), 0);
+      return { ...summary(u, bets), bets, base: Math.round(((+u.state?.start || 500) - gifts) * 100) / 100 };
     },
     async free(name) {
       return { free: !(await get('user:' + keyOf(name))) };
@@ -304,7 +341,8 @@ export function accounts({ dataDir, enrich = (b) => b }) {
         if (await get('user:' + k)) throw err(409, 'Diesen Namen gibt es schon. Melde dich an oder wähle einen anderen.');
         const salt = crypto.randomBytes(16).toString('hex');
         const token = newToken();
-        await set('user:' + k, { name: n, salt, hash: hash(pw, salt), rev: 1, state: { ...state, name: n }, at: Date.now() });
+        // Alle starten mit CHF 500, egal was das Gerät schickt
+        await set('user:' + k, { name: n, salt, hash: hash(pw, salt), rev: 1, state: { ...state, name: n, bal: 500, start: 500, bets: [], gifts: [] }, at: Date.now() });
         await set('tok:' + token, k);
         board = null;
         return { token, name: n, rev: 1 };
@@ -357,11 +395,20 @@ export function accounts({ dataDir, enrich = (b) => b }) {
         // Die Zahl liegt ausserhalb des Spielstands, das Gerät kann sie nicht ändern.
         const ids = (s) => (Array.isArray(s?.bets) ? s.bets : []).map((b) => b.id + '|' + b.t);
         const now = new Set(ids(state));
-        if (ids(u.state).some((x) => !now.has(x))) u.resets = (u.resets || 0) + 1;
+        const reset = ids(u.state).some((x) => !now.has(x));
+        if (reset) u.resets = (u.resets || 0) + 1;
+        // Startbudget nur über den Server: Neustart immer mit CHF 500, sonst bleibt der Start, wie er ist.
+        // Will ein Gerät mehr Startgeld eintragen, wird das Guthaben um die Differenz gekürzt.
+        const oldStart = +u.state?.start || 500, want = +state.start || 500;
+        const allowed = reset ? 500 : oldStart;
+        const clamp = want > allowed + 0.001;
+        if (clamp) state = { ...state, start: allowed, bal: Math.round(((+state.bal || 0) - (want - allowed)) * 100) / 100 };
+        if (reset) state = { ...state, gifts: [] };
         u.rev++; u.state = { ...state, name: u.name }; u.at = Date.now();
         await set('user:' + k, u);
         board = null;
-        return { rev: u.rev };
+        // Gekürzt: das Gerät soll den Stand vom Server übernehmen
+        return clamp ? { conflict: true, rev: u.rev, state: u.state } : { rev: u.rev };
       });
     },
   };

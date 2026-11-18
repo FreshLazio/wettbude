@@ -10,7 +10,7 @@ import { fit, derive, fromTable, oneXtwo, hockey, hockeyFit } from './model.mjs'
 import { TS_LEAGUES, tsStart } from './tsdb.mjs';
 import { FS_SPORT, fsList, fsMatch, fsOdds, fsLeague } from './flashscore.mjs';
 import { accounts } from './accounts.mjs';
-import { evalLeg, settleBet } from './public/settle.js';
+import { evalLeg, settleBet, scoreText } from './public/settle.js';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PUB = path.join(DIR, 'public');
@@ -727,11 +727,11 @@ function liveBets(bets = []) {
     for (const l of b.legs || []) {
       if (l.res) continue;
       const e = evFor(l.ev), r = e && evalLeg(l, e);
-      if (r) { l.res = r; l.score = e.void ? 'abgesagt' : `${e.sh}:${e.sa}`; }
+      if (r) { l.res = r; l.score = scoreText(e); }
     }
     const out = settleBet(b);
     // pend: entschieden, aber beim Besitzer noch nicht ausbezahlt
-    if (out) Object.assign(b, { status: out.status, payout: out.payout, done: Date.now(), pend: true });
+    if (out) Object.assign(b, { status: out.status, payout: out.payout, done: Date.now(), pend: true, ...(out.ins ? { ins: true } : {}), ...(out.capped ? { capped: true } : {}) });
   }
   return bets;
 }
@@ -766,6 +766,7 @@ async function accApi(req, res, u) {
     else if (p === 'profile' && req.method === 'GET') out = await acc.load(token, u.searchParams.get('rev'));
     else if (p === 'profile' && req.method === 'PUT') out = await acc.save(token, await readBody(req));
     else if (p === 'gift' && req.method === 'POST') out = await acc.gift(token, await readBody(req, 10000));
+    else if (p === 'rescale' && req.method === 'POST') out = await acc.rescale(token, await readBody(req, 10000));
     else if (p === 'rename' && req.method === 'POST') out = await acc.rename(token, (await readBody(req, 10000)).name);
     else return send(404, { error: 'Nicht gefunden' });
     send(200, out);

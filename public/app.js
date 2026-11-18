@@ -1,7 +1,8 @@
-import { evalLeg, settleBet, betOdds } from './settle.js';
+import { evalLeg, settleBet, betOdds, scoreText, insured, INS, nRows, boostPct, BOOST, MAX_WIN, capWin } from './settle.js';
 import { combinable, groupOdds } from './builder.js';
 
 const LS = 'wettbude.v1', START = 500, MIN = 0.5;
+const KOMBI_MAX = 20, SYS_MAX = 10; // wie bei Interwetten höchstens 20 Tipps pro Kombi
 const SPORTS = [['fussball', 'Fussball'], ['tennis', 'Tennis'], ['eishockey', 'Eishockey'], ['basketball', 'Basketball'], ['amfootball', 'American Football'], ['rugby', 'Rugby']];
 const POINTS = new Set(['basketball', 'amfootball', 'rugby']);
 const $ = (s) => document.querySelector(s);
@@ -149,14 +150,17 @@ function settle() {
       const e = byId.get(l.ev);
       if (!e) continue;
       const res = evalLeg(l, e);
-      if (res) { l.res = res; l.score = e.void ? 'abgesagt' : `${e.sh}:${e.sa}`; changed = true; }
+      if (res) { l.res = res; l.score = scoreText(e); changed = true; }
     }
     const out = settleBet(b);
     if (!out) continue;
     b.status = out.status; b.payout = out.payout; b.done = Date.now();
+    if (out.ins) b.ins = true;
+    if (out.capped) b.capped = true;
     S.bal = r2(S.bal + out.payout);
     changed = true;
     if (out.status === 'won') toast(`Gewonnen: + CHF ${chf(out.payout)}`, 'won');
+    else if (out.ins) toast(`Nur ein Spiel falsch: Kombi-Versicherung zahlt CHF ${chf(out.payout)} zurück`);
     else if (out.status === 'void') toast(`Wette ungültig, Einsatz zurück: CHF ${chf(out.payout)}`);
     else toast(`Verloren: Einsatz CHF ${chf(b.stake)}`, 'lost');
   }
@@ -195,8 +199,23 @@ function togglePick(k) {
 
 function totals() {
   const items = slipItems();
-  const kombi = items.length > 1 && S.mode === 'kombi';
+  // System geht ab 3 Tipps aus verschiedenen Spielen (höchstens 10, sonst zu viele Reihen)
+  const games = new Set(items.map((i) => i.ev)).size;
+  const sysOk = items.length >= 3 && items.length <= SYS_MAX && games === items.length;
+  const sys = S.mode === 'system' && sysOk ? Math.min(Math.max(+S.sysK || items.length - 1, 2), items.length - 1) : 0;
+  const kombi = items.length > 1 && (S.mode === 'kombi' || (S.mode === 'system' && !sys));
   const stake = Math.max(0, +S.stake || 0);
+  if (sys) {
+    // Einsatz pro Reihe; Gewinn, wenn alle Tipps stimmen = Summe aller Reihen
+    const rows = nRows(items.length, sys);
+    const legs = items.map((i) => ({ o: i.sel?.o || 1 }));
+    const total = r2(stake * rows), odds = betOdds({ sys, legs });
+    let err = '';
+    if (items.some((i) => !i.ok)) err = 'Entferne die gesperrten Tipps.';
+    else if (stake < MIN) err = `Mindesteinsatz CHF ${chf(MIN)} pro Reihe.`;
+    else if (total > S.bal + 1e-9) err = 'Guthaben reicht nicht.';
+    return { items, kombi: false, sys, rows, sysOk, stake, odds, total, win: capWin(total * odds), raw: total * odds, err, gf: {}, gInfo: [] };
+  }
   // Kombi: Tipps aus demselben Spiel bilden eine Gruppe mit eigener (korrigierter) Quote.
   const groups = new Map();
   if (kombi) for (const i of items) if (i.ok) groups.set(i.ev, [...(groups.get(i.ev) || []), i]);
@@ -209,16 +228,20 @@ function totals() {
     gf[ev] = r.f;
     gInfo.push({ match: `${list[0].e.home.n} – ${list[0].e.away.n}`, n: list.length, odds: r.odds, prod: list.reduce((x, i) => x * i.sel.o, 1) });
   }
-  const odds = items.reduce((x, i) => x * (i.sel?.o || 1), 1) * Object.values(gf).reduce((x, f) => x * f, 1);
+  // Gesamtquote mit Wettbauer-Korrektur und Kombi-Boost (gleiche Rechnung wie bei der Abrechnung)
+  const odds = betOdds({ legs: items.map((i) => ({ ev: i.ev, o: i.sel?.o || 1 })), ...(kombi ? { gf } : {}) });
   const total = kombi ? stake : stake * items.length;
-  const win = kombi ? stake * odds : items.reduce((x, i) => x + stake * (i.sel?.o || 0), 0);
+  // Höchstgewinn gilt pro Schein (Einzelwetten: pro Tipp)
+  const raw = kombi ? stake * odds : items.reduce((x, i) => x + stake * (i.sel?.o || 0), 0);
+  const win = kombi ? capWin(raw) : items.reduce((x, i) => x + capWin(stake * (i.sel?.o || 0)), 0);
   let err = '';
   if (!items.length) err = ' ';
   else if (items.some((i) => !i.ok)) err = 'Entferne die gesperrten Tipps.';
   else if (gErr) err = gErr;
+  else if (kombi && items.length > KOMBI_MAX) err = `Eine Kombi hat höchstens ${KOMBI_MAX} Tipps.`;
   else if (stake < MIN) err = `Mindesteinsatz CHF ${chf(MIN)}.`;
   else if (total > S.bal + 1e-9) err = 'Guthaben reicht nicht.';
-  return { items, kombi, stake, odds, total, win, err, gf, gInfo };
+  return { items, kombi, sys: 0, sysOk, stake, odds, total, win, raw, err, gf, gInfo };
 }
 
 function place() {
@@ -230,7 +253,8 @@ function place() {
     match: `${i.e.home.n} – ${i.e.away.n}`, lg: lgBy.get(i.e.lg)?.name || '', start: i.e.start, res: null,
   });
   const mk = (legs, stake) => ({ id: S.seq++, t: Date.now(), stake: r2(stake), legs, status: 'open', payout: 0 });
-  if (t.kombi) S.bets.push({ ...mk(t.items.map(leg), t.stake), ...(Object.keys(t.gf).length ? { gf: t.gf } : {}) });
+  if (t.sys) S.bets.push({ ...mk(t.items.map(leg), t.total), sys: t.sys });
+  else if (t.kombi) S.bets.push({ ...mk(t.items.map(leg), t.stake), ...(Object.keys(t.gf).length ? { gf: t.gf } : {}) });
   else for (const i of t.items) S.bets.push(mk([leg(i)], t.stake));
   S.bal = r2(S.bal - t.total);
   S.slip = []; V.warn = '';
@@ -407,18 +431,22 @@ function legState(l) {
 const nextStart = (b) => Math.min(...b.legs.filter((l) => !l.res).map((l) => l.start || Infinity), Infinity);
 const byKickoff = (list) => list.slice().sort((a, b) => nextStart(a) - nextStart(b) || a.t - b.t);
 
+const betName = (b) => (b.sys ? `System ${b.sys} aus ${b.legs.length}` : b.legs.length > 1 ? `Kombi ${b.legs.length}-fach` : 'Einzelwette');
 function betCard(b) {
   const odds = betOdds(b);
-  const label = { open: 'Offen', won: 'Gewonnen', lost: 'Verloren', void: 'Ungültig' }[b.status];
+  const label0 = { open: 'Offen', won: 'Gewonnen', lost: 'Verloren', void: 'Ungültig' }[b.status];
   // Offene Kombi: wie viele Tipps schon richtig sind
   const ok = b.legs.filter((l) => l.res === 'won').length;
-  const prog = b.status === 'open' && b.legs.length > 1 && ok ? `<small class="prog">${ok} von ${b.legs.length} richtig</small>` : '';
+  const prog = (b.status === 'open' && b.legs.length > 1 && ok ? `<small class="prog">${ok} von ${b.legs.length} richtig</small>` : '')
+    + (boostPct(b) && b.status !== 'lost' ? `<small class="prog boost" title="Kombi-Boost: so viel Prozent mehr Gewinn, wenn alles stimmt">🚀 +${boostPct(b, b.status !== 'open')} %</small>` : '')
+    + (b.status === 'open' && insured(b) ? `<small class="prog shield" title="Ist nur ein Spiel falsch, gibt es den Einsatz zurück (höchstens CHF ${INS.max}).">🛡️ versichert</small>` : '');
+  const label = b.ins ? 'Verloren · Einsatz zurück' : label0;
   // Tipps im Schein in der Reihenfolge der Anpfiffe
   const legs = b.legs.slice().sort((x, y) => (x.start || 0) - (y.start || 0));
   return `<div class="bet ${b.who ? 'st-' + b.status : ''}">
-    <div class="betHead"><div>${b.who ? `<b class="who">${esc(b.who)}</b>` : ''}<b>${b.legs.length > 1 ? `Kombi ${b.legs.length}-fach` : 'Einzelwette'}</b><small>${new Date(b.t).toLocaleString('de-CH', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</small>${prog}</div><span class="badge ${b.status}" ${b.pend ? 'title="Steht fest. Ausbezahlt wird, sobald der Spieler die Seite öffnet."' : ''}>${label}${b.pend && b.status === 'won' ? ' · Auszahlung folgt' : ''}</span></div>
+    <div class="betHead"><div>${b.who ? `<b class="who">${esc(b.who)}</b>` : ''}<b>${betName(b)}</b><small>${new Date(b.t).toLocaleString('de-CH', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</small>${prog}</div><span class="badge ${b.status}" ${b.pend ? 'title="Steht fest. Ausbezahlt wird, sobald der Spieler die Seite öffnet."' : ''}>${label}${b.pend && (b.status === 'won' || b.ins) ? ' · Auszahlung folgt' : ''}</span></div>
     ${legs.map((l) => `<div class="leg ${l.res || ''}"><i class="dot ${l.res || ''}"></i><div><b>${esc(l.pick)}</b><small>${esc(l.mk)} · ${esc(l.match)}${l.lg ? ' · ' + esc(l.lg) : ''}</small><small>${l.res ? 'Resultat ' + esc(l.score) + (l.res === 'void' ? ' · ungültig, Quote 1.00' : '') : legState(l)}</small></div><span class="q">${q(l.o)}</span></div>`).join('')}
-    <div class="betFoot"><div><span>Einsatz</span><b>CHF ${chf(b.stake)}</b></div><div><span>Gesamtquote</span><b>${q(odds)}</b></div><div><span>${b.status === 'open' ? 'Möglicher Gewinn' : 'Auszahlung'}</span><b class="${b.status === 'won' ? 'pos' : ''}">CHF ${chf(b.status === 'open' ? b.stake * odds : b.payout)}</b></div></div>
+    <div class="betFoot"><div><span>Einsatz${b.sys ? ` (${nRows(b.legs.length, b.sys)} Reihen à ${chf(b.stake / nRows(b.legs.length, b.sys))})` : ''}</span><b>CHF ${chf(b.stake)}</b></div><div><span>Gesamtquote</span><b>${q(odds)}</b></div><div><span>${b.status === 'open' ? 'Möglicher Gewinn' : 'Auszahlung'}</span><b class="${b.status === 'won' ? 'pos' : ''}">CHF ${chf(b.status === 'open' ? capWin(b.stake * odds) : b.payout)}</b>${(b.status === 'open' && b.stake * odds > MAX_WIN) || b.capped ? `<small class="cap">Höchstgewinn</small>` : ''}</div></div>
   </div>`;
 }
 
@@ -463,7 +491,7 @@ function renderPlayers() {
     if (!d) { $('#main').innerHTML = `<button class="back" data-act="plBack">← Alle Spieler</button><p class="empty">${P.err ? esc(P.err) : 'Wird geladen …'}</p>`; return; }
     const open = d.bets.filter((b) => b.status === 'open'), done = d.bets.filter((b) => b.status !== 'open');
     $('#main').innerHTML = `<button class="back" data-act="plBack">← Alle Spieler</button>
-      <div class="lgHead"><h3>${esc(d.name)}</h3><span>Start mit CHF ${chf(d.start)}</span>${P.admin ? `<button class="gift" data-act="gift" data-n="${esc(d.name)}">Geld geben</button>` : ''}</div>
+      <div class="lgHead"><h3>${esc(d.name)}</h3><span>Start mit CHF ${chf(d.start)}</span>${P.admin ? `<button class="gift" data-act="gift" data-n="${esc(d.name)}">Geld geben</button>` : ''}${P.admin && d.base && Math.abs(d.base - START) > 0.01 ? `<button class="gift" data-act="rescale" data-n="${esc(d.name)}" data-b="${d.base}">Auf CHF ${START} Start umrechnen</button>` : ''}</div>
       <div class="stats">
         <div class="stat"><span>Gewinn gesamt</span>${signed(d.profit)}</div>
         <div class="stat"><span>Letzte 7 Tage</span>${signed(d.week)}</div>
@@ -643,7 +671,7 @@ function renderStats() {
     <div class="panel"><h3>Letzte Wetten</h3><p class="sub">Gewinn oder Verlust pro Schein, neueste rechts.</p>
       <div class="bars">${last.map((b) => `<div title="${esc(b.legs.map((l) => l.pick).join(' + '))}: ${sign(net(b))}"><i class="${cls(net(b))}" style="height:${Math.max(3, Math.abs(net(b)) / mxLast * 100)}%"></i></div>`).join('')}</div></div>
     <div class="panel"><h3>Nach Sportart</h3><table class="tbl"><tr><th></th><th>Wetten</th><th>Treffer</th><th></th><th>Gewinn / Verlust</th></tr>${groups(sportName)}</table></div>
-    <div class="panel"><h3>Einzel und Kombi</h3><table class="tbl"><tr><th></th><th>Wetten</th><th>Treffer</th><th></th><th>Gewinn / Verlust</th></tr>${groups((b) => (b.legs.length > 1 ? `Kombi ${b.legs.length}-fach` : 'Einzelwette'))}</table></div>`;
+    <div class="panel"><h3>Einzel und Kombi</h3><table class="tbl"><tr><th></th><th>Wetten</th><th>Treffer</th><th></th><th>Gewinn / Verlust</th></tr>${groups(betName)}</table></div>`;
 }
 
 function renderSlip() {
@@ -653,7 +681,11 @@ function renderSlip() {
   let h = `<div class="slipHead"><span>Wettschein${t.items.length ? ` (${t.items.length})` : ''}</span>${t.items.length ? '<button data-act="clear">Leeren</button>' : '<button data-act="sheet">Schliessen</button>'}</div>`;
   if (!t.items.length) h += '<p class="empty">Klick auf eine Quote, um einen Tipp hinzuzufügen.</p>';
   else {
-    if (t.items.length > 1) h += `<div class="modes"><button data-act="mode" data-m="kombi" class="${t.kombi ? 'on' : ''}">Kombi</button><button data-act="mode" data-m="einzel" class="${t.kombi ? '' : 'on'}">Einzel</button></div>`;
+    if (t.items.length > 1) h += `<div class="modes"><button data-act="mode" data-m="kombi" class="${t.kombi ? 'on' : ''}">Kombi</button>${t.sysOk ? `<button data-act="mode" data-m="system" class="${t.sys ? 'on' : ''}">System</button>` : ''}<button data-act="mode" data-m="einzel" class="${t.kombi || t.sys ? '' : 'on'}">Einzel</button></div>`;
+    if (t.sys) {
+      const n = t.items.length;
+      h += `<div class="sysPick"><span>Wie viele müssen stimmen?</span>${Array.from({ length: n - 2 }, (_, i) => i + 2).map((k) => `<button data-act="sysK" data-k="${k}" class="${k === t.sys ? 'on' : ''}">${k} aus ${n}<small>${nRows(n, k)} Reihen</small></button>`).join('')}</div>`;
+    }
     h += t.items.map((i) => `<div class="pick ${i.ok ? '' : 'bad'}">
       <b>${i.e ? esc(pickLabel(i.e, i.m, i.p, i.line)) : 'Tipp'}</b>
       <small>${mName(i.m)}${i.e ? ' · ' + esc(i.e.home.n) + ' – ' + esc(i.e.away.n) : ''}</small>
@@ -661,7 +693,7 @@ function renderSlip() {
       <button class="x" data-act="pick" data-k="${esc(key(i.ev, i.m, i.p))}" title="Entfernen">×</button>
     </div>`).join('');
     h += `<div class="slipBody">
-      <div class="stake"><label for="stake">Einsatz${t.kombi || t.items.length === 1 ? '' : ' pro Wette'}</label><span>CHF</span><input id="stake" type="number" min="0.5" step="0.5" inputmode="decimal" value="${esc(S.stake)}"></div>
+      <div class="stake"><label for="stake">Einsatz${t.sys ? ' pro Reihe' : t.kombi || t.items.length === 1 ? '' : ' pro Wette'}</label><span>CHF</span><input id="stake" type="number" min="0.5" step="0.5" inputmode="decimal" value="${esc(S.stake)}"></div>
       <div class="quick">${[5, 10, 25, 50].map((v) => `<button data-act="stake" data-v="${v}">${v}</button>`).join('')}<button data-act="stake" data-v="max">Max</button></div>
       <div id="sums"></div>
       <button class="go" data-act="place">Wette platzieren</button>
@@ -676,14 +708,48 @@ function renderSlip() {
   fab.textContent = `Wettschein (${t.items.length})`;
 }
 
+// Hinweis, wenn der Schein mehr als den Höchstgewinn auszahlen würde
+const capInfo = (t) => (t.raw > t.win + 0.005 ? `<div class="sum capWarn"><span>Höchstgewinn pro Schein: CHF ${chf(MAX_WIN)}<small>Ohne Grenze wären es CHF ${chf(t.raw)}. Mehr als CHF ${chf(MAX_WIN)} wird nicht ausbezahlt, ein höherer Einsatz lohnt sich hier nicht.</small></span></div>` : '');
+
+// Kombi-Boost im Wettschein: aktiv (Gesamtquote enthält ihn schon) oder was noch fehlt
+function boostInfo(t) {
+  const legs = t.items.filter((i) => i.sel).map((i) => ({ ev: i.ev, o: i.sel.o }));
+  const pct = boostPct({ legs, gf: t.gf });
+  const ok = new Set(legs.filter((l) => l.o >= BOOST.minOdds).map((l) => l.ev)).size;
+  if (pct) return `<div class="sum ins on boost"><span>🚀 Kombi-Boost +${pct} %<small>Auf den Gewinn, ist in der Gesamtquote schon drin. Jedes weitere Spiel ab Quote ${q(BOOST.minOdds)}: +${BOOST.step} % (bis ${BOOST.max} %).</small></span></div>`;
+  return `<div class="sum ins"><span>🚀 Kombi-Boost<small>Ab ${BOOST.from} Spielen mit Quote ab ${q(BOOST.minOdds)} gibt es +${BOOST.step} % auf den Gewinn${ok ? `, dir fehlen noch ${BOOST.from - ok}` : ''}.</small></span></div>`;
+}
+
+// Hinweis zur Kombi-Versicherung im Wettschein: aktiv, oder was noch fehlt (erst ab 3 Spielen gezeigt)
+function insInfo(t) {
+  const legs = t.items.filter((i) => i.sel).map((i) => ({ ev: i.e.id, o: i.sel.o }));
+  const games = new Set(legs.map((l) => l.ev)).size;
+  if (insured({ legs, gf: t.gf })) return `<div class="sum ins on"><span>🛡️ Kombi-Versicherung aktiv<small>Ist nur ein Spiel falsch, bekommst du den Einsatz zurück (höchstens CHF ${INS.max}).</small></span></div>`;
+  if (games < 3) return '';
+  return `<div class="sum ins"><span>🛡️ Kombi-Versicherung<small>Gilt ab ${INS.games} verschiedenen Spielen, jedes mit Quote ab ${q(INS.minOdds)}.${games < INS.games ? ` Noch ${INS.games - games} Spiel${INS.games - games === 1 ? '' : 'e'}.` : ' Ein Spiel hat eine zu kleine Quote.'}</small></span></div>`;
+}
+
 function renderSums() {
   const el = $('#sums');
   if (!el) return;
   const t = totals();
+  if (t.sys) {
+    // Was bleibt, wenn genau ein Tipp falsch ist: je nachdem welcher, zwischen lo und hi
+    const o = t.items.map((i) => i.sel?.o || 1), n = o.length;
+    const one = o.map((_, x) => t.total * betOdds({ sys: t.sys, legs: o.map((v, j) => ({ o: v, res: j === x ? 'lost' : 'won' })) }, true));
+    const lo = Math.min(...one), hi = Math.max(...one);
+    el.innerHTML = `<div class="sum"><span>System ${t.sys} aus ${n}<small>${t.rows} Reihen à CHF ${chf(t.stake)}</small></span><b>${t.rows}×</b></div>
+      <div class="sum"><span>Einsatz total</span><b>CHF ${chf(t.total)}</b></div>
+      <div class="sum ins on"><span>Wenn 1 Tipp falsch ist<small>${t.sys === n - 1 ? 'Es bleibt genau eine Reihe übrig.' : 'Alle Reihen ohne diesen Tipp zahlen aus.'} Bei ${n - t.sys + 1} falschen ist alles verloren.</small></span><b>${chf(lo)}${hi - lo > 0.01 ? ' – ' + chf(hi) : ''}</b></div>
+      <div class="sum big"><span>Möglicher Gewinn (alle richtig)</span><b>CHF ${chf(t.win)}</b></div>${capInfo(t)}`;
+    const go = $('#slip .go');
+    if (go) go.disabled = !!t.err;
+    return;
+  }
   el.innerHTML = `${t.gInfo.map((g) => `<div class="sum same"><span>Gleiches Spiel: ${esc(g.match)} (${g.n} Tipps)<small>Quote angepasst, weil die Tipps zusammenhängen (einzeln multipliziert ${q(g.prod)})</small></span><b>${q(g.odds)}</b></div>`).join('')}
-    ${t.kombi ? `<div class="sum"><span>Gesamtquote (${t.items.length} Tipps)</span><b>${q(t.odds)}</b></div>` : ''}
+    ${t.kombi ? `<div class="sum"><span>Gesamtquote (${t.items.length} Tipps)</span><b>${q(t.odds)}</b></div>${boostInfo(t)}${insInfo(t)}` : ''}
     <div class="sum"><span>Einsatz total</span><b>CHF ${chf(t.total)}</b></div>
-    <div class="sum big"><span>Möglicher Gewinn</span><b>CHF ${chf(t.win)}</b></div>`;
+    <div class="sum big"><span>Möglicher Gewinn</span><b>CHF ${chf(t.win)}</b></div>${capInfo(t)}`;
   const go = $('#slip .go');
   if (go) go.disabled = !!t.err;
 }
@@ -701,7 +767,8 @@ function renderTop() {
 
 /* ---------- Start: Name, Erklärung, Budget ---------- */
 
-const BUDGETS = [[100, 'Vorsichtig', 'Wenig Geld, jede Wette zählt.'], [500, 'Klassisch', 'Der normale Start.'], [2000, 'Grosser Einsatz', 'Viel Spielraum für Kombis.']];
+// Alle starten gleich, damit die Rangliste fair ist.
+const BUDGETS = [[START, 'Startguthaben', 'Alle beginnen mit demselben Betrag.']];
 const intro = { step: 0, mode: 'new', name: '', pw: '', budget: 500, err: '', busy: false, sig: '' };
 
 async function introFirst() {
@@ -770,12 +837,12 @@ function renderIntro() {
     `<h2>So funktioniert es</h2>
      <ol class="how">
        <li><b>Quote anklicken.</b> Die Zahl sagt, mit wie viel dein Einsatz multipliziert wird. Quote 2.50 und CHF 10 Einsatz ergeben CHF 25.</li>
-       <li><b>Einzel oder Kombi.</b> Bei einer Kombi werden alle Quoten miteinander multipliziert. Dafür müssen alle Tipps stimmen.</li>
+       <li><b>Einzel oder Kombi.</b> Bei einer Kombi werden alle Quoten miteinander multipliziert. Dafür müssen alle Tipps stimmen. Ab ${INS.games} Spielen mit Quote ab ${q(INS.minOdds)} ist die Kombi versichert: Ist nur ein Spiel falsch, gibt es den Einsatz zurück (höchstens CHF ${INS.max}). Ab ${BOOST.from} solchen Spielen gibt es ausserdem den Kombi-Boost: +${BOOST.step} % Gewinn pro Spiel (bis ${BOOST.max} %). Bei einer Systemwette (z. B. 3 aus 4) darf auch etwas falsch sein.</li>
        <li><b>Einsatz wählen und platzieren.</b> Die Quote ist ab dann fix. Wetten gehen bis zum Anpfiff.</li>
        <li><b>Abrechnung von selbst.</b> Nach dem Spiel kommt der Gewinn aufs Konto. Unter «Meine Wetten» und «Statistik» siehst du, wie es läuft.</li>
      </ol>
      <div class="introBtns"><button class="reset" data-act="introBack">Zurück</button><button class="go" data-act="introNext">Weiter</button></div>`,
-    `<h2>Mit wie viel startest du, ${esc(S.pick ? S.name : intro.name.trim())}?</h2>
+    `<h2>Du startest mit CHF ${START}, ${esc(S.pick ? S.name : intro.name.trim())}</h2>
      <div class="budgets">${BUDGETS.map(([v, t, d]) => `<button data-act="budget" data-v="${v}" class="${intro.budget === v ? 'on' : ''}"><b>CHF ${v}</b><span>${t}</span><small>${d}</small></button>`).join('')}</div>
      ${err}
      <div class="introBtns">${S.pick ? '<span></span>' : '<button class="reset" data-act="introBack">Zurück</button>'}<button class="go" data-act="introGo" ${intro.busy ? 'disabled' : ''}>Los gehts</button></div>`,
@@ -820,8 +887,12 @@ document.addEventListener('click', (ev) => {
   else if (a === 'favL') { const l = b.dataset.l, f = S.favL || []; S.favL = f.includes(l) ? f.filter((x) => x !== l) : [...f, l]; save(); }
   else if (a === 'qClear') { V.q = ''; $('#q').value = ''; $('#qx').hidden = true; }
   else if (a === 'mode') { S.mode = b.dataset.m; save(); }
+  else if (a === 'sysK') { S.sysK = +b.dataset.k; save(); }
   else if (a === 'clear') { S.slip = []; V.warn = ''; save(); }
-  else if (a === 'stake') { S.stake = b.dataset.v === 'max' ? Math.floor(S.bal / (S.mode === 'kombi' || S.slip.length < 2 ? 1 : S.slip.length) * 100) / 100 : +b.dataset.v; V.warn = ''; save(); }
+  else if (a === 'stake') {
+    const t = totals(), parts = t.sys ? t.rows : t.kombi || S.slip.length < 2 ? 1 : S.slip.length;
+    S.stake = b.dataset.v === 'max' ? Math.floor(S.bal / parts * 100) / 100 : +b.dataset.v; V.warn = ''; save();
+  }
   else if (a === 'place') return place();
   else if (a === 'sheet') return document.body.classList.toggle('sheet');
   else if (a === 'reset') {
@@ -836,6 +907,16 @@ document.addEventListener('click', (ev) => {
     if (!(x > 0)) return;
     if (!confirm(`${who} CHF ${chf(x)} geben?`)) return;
     api('gift', { method: 'POST', body: JSON.stringify({ name: who, amount: x }) }).then((r) => {
+      toast(`${r.name} hat jetzt CHF ${chf(r.bal)}`);
+      P.list = null; loadPlayers(true); loadPlayer(who);
+      if (r.name === S.name) pull();
+    }).catch((e) => toast(e.message));
+    return;
+  }
+  else if (a === 'rescale') {
+    const who = b.dataset.n, base = +b.dataset.b, f = START / base;
+    if (!confirm(`${who} startete mit CHF ${chf(base)}. Auf CHF ${START} umrechnen?\n\nAlle Einsätze, Gewinne und das Guthaben werden mal ${f.toFixed(3)} gerechnet (z. B. CHF ${chf(500)} Einsatz → CHF ${chf(500 * f)}). Geschenktes Geld bleibt.`)) return;
+    api('rescale', { method: 'POST', body: JSON.stringify({ name: who }) }).then((r) => {
       toast(`${r.name} hat jetzt CHF ${chf(r.bal)}`);
       P.list = null; loadPlayers(true); loadPlayer(who);
       if (r.name === S.name) pull();
