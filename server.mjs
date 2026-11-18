@@ -590,8 +590,12 @@ async function fsSweep() {
   }
   const due = open.filter((e) => e.fsId && (e.id.startsWith('fs') || !fsCovered.has(e.lg))
     && now - (e.fsAt || 0) > (e.start - now < 3 * 36e5 ? 10 : e.start - now < DAY ? 30 : 120) * 6e4);
-  due.sort((a, b) => a.start - b.start);
-  await pool(due.slice(0, 600), 3, async (ev) => {
+  // Wichtige Ligen zuerst (als ob sie 4 Tage früher spielten), dann nach Anstoss.
+  // Kleine Ligen wie College-Basketball (Hunderte Spiele) kommen danach.
+  const TOPL = /^(nfl|nba|nhl|sui\.|ita\.[12]$|ita\.[cd]|eng\.1|esp\.1|ger\.1|fra\.1|uefa\.|arg\.1|rug\.)/;
+  const prio = (e) => e.start - (TOPL.test(e.lg) ? 4 * DAY : 0) + (/college/.test(e.lg) ? DAY : 0);
+  due.sort((a, b) => prio(a) - prio(b));
+  await pool(due.slice(0, 900), 4, async (ev) => {
     ev.fsAt = Date.now();
     const o = await fsOdds(ev.fsId, ev.fsH, ev.fsA, ev.sport, { nohalf: ev.nohalf });
     const cur = store.get(ev.id);
