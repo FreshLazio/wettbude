@@ -45,15 +45,17 @@ const IMG = 'https://www.flashscore.com/res/image/data/';
 
 // Flashscore-Ligenname («LAND: Liga» oder «LAND: Liga - Runde») -> unsere Liga.
 const FS_LEAGUES = {
-  'sui.1': 'SWITZERLAND: Super League', 'sui.2': 'SWITZERLAND: Challenge League', 'sui.cup': 'SWITZERLAND: Swiss Cup',
+  'sui.1': 'SWITZERLAND: Super League', 'sui.2': 'SWITZERLAND: Challenge League', 'sui.cup': ['SWITZERLAND: Swiss Cup', 'SWITZERLAND: Schweizer Cup'], 'fra.coupe_de_france': 'FRANCE: Coupe de France',
+  'sui.3': 'SWITZERLAND: Promotion League', 'sui.4.1': 'SWITZERLAND: 1.Liga Classic Group 1', 'sui.4.2': 'SWITZERLAND: 1.Liga Classic Group 2', 'sui.4.3': 'SWITZERLAND: 1.Liga Classic Group 3',
   'ita.1': 'ITALY: Serie A', 'ita.2': 'ITALY: Serie B', 'ita.coppa_italia': 'ITALY: Coppa Italia',
   'ita.c.a': 'ITALY: Serie C - Group A', 'ita.c.b': 'ITALY: Serie C - Group B', 'ita.c.c': 'ITALY: Serie C - Group C', 'ita.d.i': 'ITALY: Serie D - Group I',
   'arg.1': 'ARGENTINA: Liga Profesional', 'arg.2': 'ARGENTINA: Primera Nacional', 'arg.3': 'ARGENTINA: Primera B', 'arg.4': 'ARGENTINA: Primera C', 'arg.5': 'ARGENTINA: Primera D',
-  'arg.copa': 'ARGENTINA: Copa Argentina', 'arg.copa_de_la_superliga': 'ARGENTINA: Copa de la Liga Profesional', 'arg.trofeo_de_la_campeones': 'ARGENTINA: Trofeo de Campeones', 'arg.supercopa': 'ARGENTINA: Supercopa Argentina',
-  'ger.1': 'GERMANY: Bundesliga', 'ger.2': 'GERMANY: 2. Bundesliga', 'ger.dfb_pokal': 'GERMANY: DFB Pokal',
+  'arg.copa': 'ARGENTINA: Copa Argentina', 'arg.copa_de_la_superliga': 'ARGENTINA: Copa de la Liga Profesional', 'arg.trofeo_de_la_campeones': 'ARGENTINA: Trofeo de Campeones', 'arg.supercopa': ['ARGENTINA: Super Cup', 'ARGENTINA: Supercopa Argentina'],
+  'ger.1': 'GERMANY: Bundesliga', 'ger.2': 'GERMANY: 2. Bundesliga', 'ger.dfb_pokal': ['GERMANY: DFB Pokal', 'GERMANY: DFB-Pokal'],
   'eng.1': 'ENGLAND: Premier League', 'eng.2': 'ENGLAND: Championship', 'eng.3': 'ENGLAND: League One', 'eng.4': 'ENGLAND: League Two', 'eng.5': 'ENGLAND: National League', 'eng.fa': 'ENGLAND: FA Cup', 'eng.league_cup': 'ENGLAND: EFL Cup',
   'esp.1': 'SPAIN: LaLiga', 'esp.2': 'SPAIN: LaLiga2', 'esp.copa_del_rey': 'SPAIN: Copa del Rey',
   'fra.1': 'FRANCE: Ligue 1', 'fra.2': 'FRANCE: Ligue 2', 'ned.1': 'NETHERLANDS: Eredivisie', 'ned.2': 'NETHERLANDS: Eerste Divisie',
+  'rou.1': 'ROMANIA: Superliga', 'rou.2': 'ROMANIA: Liga 2',
   'por.1': 'PORTUGAL: Liga Portugal', 'bel.1': 'BELGIUM: Jupiler Pro League', 'aut.1': 'AUSTRIA: Bundesliga', 'tur.1': 'TURKEY: Super Lig', 'gre.1': 'GREECE: Super League',
   'sco.1': 'SCOTLAND: Premiership', 'sco.2': 'SCOTLAND: Championship', 'den.1': 'DENMARK: Superliga', 'swe.1': 'SWEDEN: Allsvenskan', 'nor.1': 'NORWAY: Eliteserien', 'rus.1': 'RUSSIA: Premier League',
   'bra.1': 'BRAZIL: Serie A', 'bra.2': 'BRAZIL: Serie B', 'uru.1': 'URUGUAY: Liga AUF Uruguaya', 'chi.1': 'CHILE: Liga de Primera', 'col.1': 'COLOMBIA: Primera A', 'per.1': 'PERU: Liga 1',

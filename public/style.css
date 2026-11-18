@@ -65,8 +65,14 @@ button.odd:hover:not(:disabled) { border-color: var(--pine); }
 .odd.sel { background: var(--amber); color: var(--amberInk); }
 .odd.sel span { color: var(--amberInk); }
 .odd:disabled, .odd.off { opacity: .45; }
-.odd.up b::after { content: " ▲"; color: var(--win); font-size: 9px; }
-.odd.down b::after { content: " ▼"; color: var(--lose); font-size: 9px; }
+/* gerade eben geändert (Seite war offen): kurz farbig hinterlegt */
+.odd.up:not(.sel) { background: #e2f1e4; }
+.odd.down:not(.sel) { background: #f6e3e1; }
+/* letzte Änderung laut Server: Pfeil vor der Quote */
+.odd .mv { font-style: normal; font-size: 9px; margin-right: 3px; vertical-align: 1px; }
+.odd .mv.up { color: var(--win); }
+.odd .mv.down { color: var(--lose); }
+.odd.sel .mv { color: var(--amberInk); }
 .more { height: 42px; border-radius: 8px; color: var(--mut); font-weight: 600; font-size: 12px; }
 .more:hover { background: #efeee7; }
 .extra { padding: 4px 12px 14px 84px; background: #faf9f5; border-top: 1px dashed var(--line); }
@@ -120,7 +126,7 @@ button.odd:hover:not(:disabled) { border-color: var(--pine); }
 .filter button { padding: 6px 14px; border-radius: 16px; background: #e9e6da; font-weight: 600; color: var(--mut); }
 .filter button.on { background: var(--pine); color: #fff; }
 /* Spieler */
-.players .pl { display: grid; grid-template-columns: 32px minmax(0, 1fr) 100px 110px; gap: 10px; align-items: center; width: 100%; padding: 12px 14px; border-top: 1px solid var(--line); text-align: left; }
+.players .pl { display: grid; grid-template-columns: 32px minmax(0, 1fr) 100px 110px 100px; gap: 10px; align-items: center; width: 100%; padding: 12px 14px; border-top: 1px solid var(--line); text-align: left; }
 .players .pl:first-child { border-top: 0; }
 .players .pl:hover { background: #f8f7f2; }
 .players .pl.me { box-shadow: inset 3px 0 0 var(--amber); }
@@ -140,11 +146,21 @@ button.odd:hover:not(:disabled) { border-color: var(--pine); }
 .dbar .down { background: var(--lose); border-radius: 0 0 3px 3px; }
 .day small { color: var(--mut); font-size: 11px; }
 .day .none { color: #c4c1b3; }
+.pl .rs { color: var(--lose); font-weight: 600; }
+.players .num small.pos { color: var(--win); font-weight: 600; }
+.players .num .none { color: var(--mut); }
 .lgHead .gift { margin-left: auto; padding: 5px 12px; border-radius: 8px; background: var(--amber); color: #1d1d1d; font-weight: 700; font-size: 13px; }
 .back { margin-bottom: 12px; padding: 6px 12px; border-radius: 8px; background: var(--card); border: 1px solid var(--line); font-weight: 600; }
 .secHead { margin: 18px 4px 8px; font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: var(--mut); }
+.players .nums { display: contents; }
 @media (max-width: 600px) {
-  .players .pl { grid-template-columns: 22px minmax(0, 1fr) 84px 76px; gap: 6px; padding: 10px; }
+  /* Handy: Name oben über die ganze Breite, darunter Guthaben / Offen / Gesamt in drei Spalten */
+  .players .pl { grid-template-columns: 22px minmax(0, 1fr); gap: 4px 8px; padding: 10px 12px; }
+  .players .rank { grid-row: 1 / 3; align-self: start; padding-top: 2px; }
+  .players .nums { display: grid; grid-column: 2; grid-template-columns: repeat(3, 1fr); gap: 6px; margin-top: 2px; }
+  .players .nums .num { text-align: left; }
+  .players .num b { font-size: 14px; }
+  .players .num small { font-size: 11px; }
   .days { gap: 2px; padding: 8px 4px; }
   .day { font-size: 11px; }
   .day small:last-child { display: none; }
@@ -279,8 +295,16 @@ button.odd:hover:not(:disabled) { border-color: var(--pine); }
   .ev .odds .odd { flex: 1; }
   .more { grid-column: 3; grid-row: 1; }
   .extra { padding-left: 12px; }
-  .tabs button { padding: 0 8px; }
+  /* Kopfzeile: oben Logo + Name + Guthaben, darunter die Reiter (wischbar), dann die Suche */
+  .brand { order: 1; font-size: 18px; }
+  .topRight { order: 2; gap: 8px; }
+  .tabs { order: 3; flex-basis: 100%; height: 42px; overflow-x: auto; scrollbar-width: none; margin: 0 -10px; padding: 0 4px; }
+  .tabs::-webkit-scrollbar { display: none; }
+  .tabs button { padding: 0 10px; white-space: nowrap; flex: none; }
+  .bal { padding: 5px 9px; }
+  .sports { grid-template-columns: repeat(3, 1fr); }
+  .sports button { font-size: 12px; }
   #who { font-size: 0; } /* am Handy aus Platzgründen nur der Abmelden-Knopf */
   #who button { font-size: 12px; margin-left: 0; }
-  #who button.wname { max-width: 90px; }
+  #who button.wname { max-width: 110px; font-size: 13px; color: #fff; }
 }

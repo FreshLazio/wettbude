@@ -25,6 +25,11 @@ const LEAGUES = [
   [F, 'soccer', 'sui.1', 'Super League', 'Schweiz'],
   [F, 'soccer', 'sui.2', 'Challenge League', 'Schweiz'],
   [F, 'soccer', 'sui.cup', 'Schweizer Cup', 'Schweiz'],
+  // Tiefere Schweizer Ligen nur über Flashscore und nur Spiele mit echten Buchmacherquoten
+  [F, null, 'sui.3', 'Promotion League', 'Schweiz', true],
+  [F, null, 'sui.4.1', '1. Liga Classic Gruppe 1', 'Schweiz', true],
+  [F, null, 'sui.4.2', '1. Liga Classic Gruppe 2', 'Schweiz', true],
+  [F, null, 'sui.4.3', '1. Liga Classic Gruppe 3', 'Schweiz', true],
   [F, 'soccer', 'ita.1', 'Serie A', 'Italien'],
   [F, 'soccer', 'ita.2', 'Serie B', 'Italien'],
   [F, 'soccer', 'ita.coppa_italia', 'Coppa Italia', 'Italien'],
@@ -52,12 +57,15 @@ const LEAGUES = [
   [F, 'soccer', 'esp.copa_del_rey', 'Copa del Rey', 'Spanien'],
   [F, 'soccer', 'fra.1', 'Ligue 1', 'Frankreich'],
   [F, 'soccer', 'fra.2', 'Ligue 2', 'Frankreich'],
+  [F, null, 'fra.coupe_de_france', 'Coupe de France', 'Frankreich', true], // viele Amateurklubs: nur mit echten Quoten
   [F, 'soccer', 'ned.1', 'Eredivisie', 'Niederlande'],
   [F, 'soccer', 'ned.2', 'Eerste Divisie', 'Niederlande'],
   [F, 'soccer', 'por.1', 'Primeira Liga', 'Portugal'],
   [F, 'soccer', 'bel.1', 'Pro League', 'Belgien'],
   [F, 'soccer', 'aut.1', 'Bundesliga', 'Österreich'],
   [F, 'soccer', 'tur.1', 'Süper Lig', 'Türkei'],
+  [F, 'soccer', 'rou.1', 'Superliga', 'Rumänien'],
+  [F, 'soccer', 'rou.2', 'Liga 2', 'Rumänien'],
   [F, 'soccer', 'gre.1', 'Super League', 'Griechenland'],
   [F, 'soccer', 'sco.1', 'Premiership', 'Schottland'],
   [F, 'soccer', 'sco.2', 'Championship', 'Schottland'],
@@ -119,7 +127,7 @@ const LEAGUES = [
   [R, null, 'rug.nc', 'Nations Championship', 'Länderspiele'],
   [R, null, 'rug.wc', 'Weltmeisterschaft', 'Länderspiele'],
   [R, null, 'rug.friendly', 'Testspiele', 'Länderspiele'],
-].map(([sport, es, slug, name, land]) => ({ sport, es, slug, name, land, dead: false }));
+].map(([sport, es, slug, name, land, onlyReal]) => ({ sport, es, slug, name, land, dead: false, onlyReal: !!onlyReal }));
 // Ligen aus TheSportsDB (Serie C/D, Eishockey Europa) hinter der jeweiligen Sportart einreihen.
 for (const L of TS_LEAGUES) {
   const at = LEAGUES.findLastIndex((x) => x.sport === L.sport && (L.land !== 'Italien' || x.land === 'Italien'));
@@ -289,7 +297,7 @@ function upsert(n) {
     // Quoten nur vor Anpfiff erneuern, danach die letzten bekannten behalten.
     n.src = n.state === 'pre' ? { ...o.src, ...n.src } : o.src;
     n.b365At = o.b365At;
-    for (const k of ['fsId', 'fsH', 'fsA', 'fsAt']) if (o[k] != null && n[k] == null) n[k] = o[k];
+    for (const k of ['fsId', 'fsH', 'fsA', 'fsAt', 'mv']) if (o[k] != null && n[k] == null) n[k] = o[k];
     if (!n.day) n.day = o.day;
     if ((n.done || n.void) && !(o.done || o.void)) queueSave();
   }
@@ -599,7 +607,23 @@ async function fsSweep() {
     ev.fsAt = Date.now();
     const o = await fsOdds(ev.fsId, ev.fsH, ev.fsA, ev.sport, { nohalf: ev.nohalf });
     const cur = store.get(ev.id);
-    if (o && cur && cur.state === 'pre') { cur.src = { ...cur.src, fs: o }; build(cur); }
+    if (o && cur && cur.state === 'pre') {
+      // Richtung der letzten Änderung pro Tipp merken (wie die Pfeile auf Flashscore).
+      const prev = cur.src?.fs?.m || {}, mv = {};
+      for (const [mk, x] of Object.entries(o.m)) {
+        for (const [p, s] of Object.entries(x)) {
+          if (p === 'line' || !s?.o) continue;
+          const old = prev[mk]?.[p];
+          const sameLine = prev[mk]?.line === x.line && old?.b === s.b;
+          // { d: 1 gestiegen / -1 gesunken, t: Zeitpunkt der Änderung }
+          const was = cur.mv?.[mk]?.[p];
+          const hit = sameLine && old.o !== s.o ? { d: s.o > old.o ? 1 : -1, t: Date.now() } : sameLine && was?.t ? was : null;
+          if (hit) (mv[mk] ||= {})[p] = hit;
+        }
+      }
+      cur.mv = mv;
+      cur.src = { ...cur.src, fs: o }; build(cur);
+    }
     await new Promise((r) => setTimeout(r, 250));
   });
   const own = open.filter((e) => e.id.startsWith('fs'));
@@ -660,11 +684,20 @@ function payload(need) {
   const now = Date.now();
   const events = [];
   const known = new Set(LEAGUES.map((l) => l.slug));
+  const onlyReal = new Set(LEAGUES.filter((l) => l.onlyReal).map((l) => l.slug));
   for (const ev of store.values()) {
     if (!need.has(ev.id) && (!known.has(ev.lg) || ev.start < now - 2 * DAY || ev.start > now + 10 * DAY || ev.done || ev.void || ev.state !== 'pre')) continue;
+    // Promotion League / 1. Liga: nur Spiele, für die ein Buchmacher wirklich Quoten anbietet.
+    if (!need.has(ev.id) && onlyReal.has(ev.lg) && !ev.src?.fs?.m?.['1x2']) continue;
     // Liga kommt von Flashscore: Spiele aus anderen Quellen nur noch für bestehende Wetten zeigen.
     if (!need.has(ev.id) && fsCovered.has(ev.lg) && !ev.id.startsWith('fs')) continue;
-    const { src, b365At, day, fsId, fsH, fsA, fsAt, ...pub } = ev;
+    const { src, b365At, day, fsId, fsH, fsA, fsAt, mv, ...pub } = ev;
+    // Pfeile nur für Quoten, die sich in den letzten 2 Stunden geändert haben
+    if (mv) {
+      const rec = {};
+      for (const [mk, x] of Object.entries(mv)) for (const [p, c] of Object.entries(x)) if (c?.t > now - 2 * 36e5) (rec[mk] ||= {})[p] = c.d;
+      if (Object.keys(rec).length) pub.mv = rec;
+    }
     // Alte Wette auf ein Spiel aus einer anderen Quelle: Resultat vom Flashscore-Zwilling nehmen.
     const tw = fsId && !ev.id.startsWith('fs') && !ev.done && !ev.void && store.get('fs' + fsId);
     if (tw && (tw.done || tw.void || tw.state !== 'pre')) {

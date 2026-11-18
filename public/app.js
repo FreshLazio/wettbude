@@ -229,7 +229,10 @@ function oddBtn(e, m, p, short) {
   const on = S.slip.some((s) => s.ev === e.id && s.m === m && s.p === p);
   const f = flash.get(k);
   const cls = ['odd', on ? 'sel' : '', f && f.bis > Date.now() ? f.dir : ''].join(' ');
-  return `<button class="${cls}" data-act="pick" data-k="${esc(k)}" title="${esc(sel.b)}" ${isOpen(e) ? '' : 'disabled'}><span>${esc(short)}</span><b>${q(sel.o)}</b></button>`;
+  // Pfeil: letzte Änderung dieser Quote laut Server (grün gestiegen, rot gesunken)
+  const mv = e.mv?.[m]?.[p];
+  const arr = mv > 0 ? '<i class="mv up" title="Quote gestiegen">▲</i>' : mv < 0 ? '<i class="mv down" title="Quote gesunken">▼</i>' : '';
+  return `<button class="${cls}" data-act="pick" data-k="${esc(k)}" title="${esc(sel.b)}" ${isOpen(e) ? '' : 'disabled'}><span>${esc(short)}</span><b>${arr}${q(sel.o)}</b></button>`;
 }
 
 function countdown(start) {
@@ -438,6 +441,7 @@ function renderPlayers() {
         <div class="stat"><span>Letzte 7 Tage</span>${signed(d.week)}</div>
         <div class="stat"><span>Guthaben</span><b>CHF ${chf(d.bal)}</b></div>
         <div class="stat"><span>Gewonnen / Verloren</span><b>${d.won} / ${d.lost}</b></div>
+        <div class="stat"><span>Konto zurückgesetzt</span><b class="${d.resets ? 'neg' : ''}">${d.resets || 0}×</b></div>
       </div>
       <h4 class="secHead">Plus und Minus pro Tag</h4>
       ${dayBars(done)}
@@ -450,9 +454,10 @@ function renderPlayers() {
   $('#main').innerHTML = `<div class="lgHead"><h3>Spieler</h3><span>${P.list.length} Profile · Rangliste nach Guthaben · Gesamt = Guthaben plus offene Einsätze minus Startbudget</span></div>
     <div class="list players">${P.list.map((p, i) => `<button class="pl ${p.name === S.name ? 'me' : ''}" data-act="pl" data-n="${esc(p.name)}">
       <span class="rank">${i + 1}</span>
-      <span class="who"><b>${esc(p.name)}${p.name === S.name ? ' (du)' : ''}</b><small>${p.won} gewonnen · ${p.lost} verloren${p.open ? ` · ${p.open} offen` : ''}</small></span>
-      <span class="num"><small>Guthaben</small><b>CHF ${chf(p.bal)}</b></span>
-      <span class="num"><small>Gesamt</small>${signed(p.profit)}</span>
+      <span class="who"><b>${esc(p.name)}${p.name === S.name ? ' (du)' : ''}</b><small>${p.won} gewonnen · ${p.lost} verloren${p.open ? ` · ${p.open} offen` : ''} · <span class="${p.resets ? 'rs' : ''}">${p.resets || 0}× zurückgesetzt</span></small></span>
+      <span class="nums"><span class="num"><small>Guthaben</small><b>CHF ${chf(p.bal)}</b></span>
+      <span class="num"><small>Offen</small>${p.stakeOpen ? `<b>CHF ${chf(p.stakeOpen)}</b><small class="pos">bis +${chf(r2(p.maxWin - p.stakeOpen))}</small>` : '<b class="none">–</b>'}</span>
+      <span class="num"><small>Gesamt</small>${signed(p.profit)}</span></span>
     </button>`).join('')}</div>`;
 }
 

@@ -102,7 +102,10 @@ export function accounts({ dataDir }) {
     const stakeOpen = open.reduce((x, b) => x + (+b.stake || 0), 0);
     const recent = bets.filter((b) => b.status !== 'open' && (b.done || b.t) > Date.now() - WEEK);
     return {
-      name: u.name, start, bal, open: open.length,
+      name: u.name, start, bal, open: open.length, resets: u.resets || 0,
+      // Geld in offenen Wetten und was sie höchstens auszahlen (Einsatz × Quote)
+      stakeOpen: Math.round(stakeOpen * 100) / 100,
+      maxWin: Math.round(open.reduce((x, b) => x + (+b.stake || 0) * (b.legs || []).reduce((q, l) => q * (+l.o || 1), 1), 0) * 100) / 100,
       profit: Math.round((bal + stakeOpen - start) * 100) / 100,
       won: bets.filter((b) => b.status === 'won').length, lost: bets.filter((b) => b.status === 'lost').length,
       week: Math.round(recent.reduce((x, b) => x + (b.payout || 0) - b.stake, 0) * 100) / 100,
@@ -218,6 +221,11 @@ export function accounts({ dataDir }) {
         const u = await get('user:' + k);
         // Anderes Gerät war schneller: dessen Stand zurückgeben, nichts überschreiben.
         if (+base !== u.rev) return { conflict: true, rev: u.rev, state: u.state };
+        // Verschwinden abgegebene Wetten (Konto zurückgesetzt), zählt der Server das mit.
+        // Die Zahl liegt ausserhalb des Spielstands, das Gerät kann sie nicht ändern.
+        const ids = (s) => (Array.isArray(s?.bets) ? s.bets : []).map((b) => b.id + '|' + b.t);
+        const now = new Set(ids(state));
+        if (ids(u.state).some((x) => !now.has(x))) u.resets = (u.resets || 0) + 1;
         u.rev++; u.state = { ...state, name: u.name }; u.at = Date.now();
         await set('user:' + k, u);
         board = null;
