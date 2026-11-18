@@ -65,7 +65,7 @@ const LEAGUES = [
   [F, 'soccer', 'aut.1', 'Bundesliga', 'Österreich'],
   [F, 'soccer', 'tur.1', 'Süper Lig', 'Türkei'],
   [F, 'soccer', 'rou.1', 'Superliga', 'Rumänien'],
-  [F, 'soccer', 'rou.2', 'Liga 2', 'Rumänien'],
+  [F, null, 'rou.2', 'Liga 2', 'Rumänien'], // nur Flashscore, ESPN kennt sie nicht
   [F, 'soccer', 'gre.1', 'Super League', 'Griechenland'],
   [F, 'soccer', 'sco.1', 'Premiership', 'Schottland'],
   [F, 'soccer', 'sco.2', 'Championship', 'Schottland'],
@@ -707,7 +707,7 @@ function payload(need) {
     if (ev.book === 'Modell' && ev.start - now > DAY) { pub.m = {}; pub.cmp = {}; pub.wait = true; }
     events.push(pub);
   }
-  return { t: now, upd: lastSweep, leagues: LEAGUES.filter((l) => !l.dead).map(({ slug, sport, name, land }) => ({ slug, sport, name, land })), events };
+  return { t: now, upd: lastSweep, leagues: LEAGUES.filter((l) => !l.dead || fsCovered.has(l.slug)).map(({ slug, sport, name, land }) => ({ slug, sport, name, land })), events };
 }
 
 let plain = { at: 0, body: '' };
