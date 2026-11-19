@@ -98,6 +98,28 @@ export function boostPct(bet, settled = false) {
   return n >= BOOST.from ? Math.min(BOOST.max, (n - BOOST.from + 1) * BOOST.step) : 0;
 }
 
+// Frühe Abrechnung wie bei bet365 («early settlement»): Steht ein Tipp während des Spiels schon
+// sicher fest, wird er sofort gewertet (Über 5.5 bei 5:2 ist gewonnen, Unter 5.5 verloren).
+// Nur in Spielphasen, in denen keine Verlängerung läuft, deren Tore bei Über/Unter nicht zählen:
+// Fussball 1. Halbzeit, Pause, 2. Halbzeit; Eishockey 1.–3. Drittel und Pausen.
+// Basketball und American Football: die Linien gelten inklusive Verlängerung, also immer.
+const SAFE = { fussball: [12, 13, 38], eishockey: [14, 15, 16, 46] };
+export function evalLegEarly(leg, ev) {
+  if (!ev || ev.state !== 'in' || ev.void || ev.sh == null || ev.sa == null) return null;
+  const sp = ev.sport;
+  if (SAFE[sp] ? !SAFE[sp].includes(ev.ph) : !['basketball', 'amfootball'].includes(sp)) return null;
+  const h = +ev.sh, a = +ev.sa, m = leg.m;
+  const line = leg.line ?? parseFloat(m.replace(/^[a-z]+/, ''));
+  const over = (x) => (Number.isFinite(line) && x > line ? (leg.p === 'O' ? 'won' : 'lost') : null);
+  if (/^ou/.test(m)) return over(h + a);
+  if (/^th/.test(m)) return over(h);
+  if (/^ta/.test(m)) return over(a);
+  if (m === 'btts') return h > 0 && a > 0 ? (leg.p === 'J' ? 'won' : 'lost') : null;
+  if (m === 'cs') { const [ch, ca] = String(leg.p).split(':').map(Number); return h > ch || a > ca ? 'lost' : null; }
+  return null;
+}
+export const earlyText = (e) => `${e.sh}:${e.sa} · früh abgerechnet, Spiel lief noch`;
+
 // Resultat-Text eines Tipps. Nach Verlängerung/Penaltys steht der Endstand dabei,
 // z. B. «2:2 · n. P. 2:3» (Eishockey: 2:2 nach 60 Minuten, im Penaltyschiessen 2:3).
 export const scoreText = (e) => (e.void ? 'abgesagt' : `${e.sh}:${e.sa}` + (/^n\. [VP]\./.test(e.txt || '') ? ` · ${e.txt}` : ''));

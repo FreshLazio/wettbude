@@ -10,7 +10,7 @@ import { fit, derive, fromTable, oneXtwo, hockey, hockeyFit } from './model.mjs'
 import { TS_LEAGUES, tsStart } from './tsdb.mjs';
 import { FS_SPORT, fsList, fsMatch, fsOdds, fsLeague } from './flashscore.mjs';
 import { accounts } from './accounts.mjs';
-import { evalLeg, settleBet, scoreText } from './public/settle.js';
+import { evalLeg, evalLegEarly, earlyText, settleBet, scoreText } from './public/settle.js';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PUB = path.join(DIR, 'public');
@@ -550,6 +550,9 @@ function fsEvent(sport, slug, x) {
     h1: soccer && x.st === 3 && x.h1[0] != null && x.h1[1] != null ? x.h1 : null,
     txt: pre ? '' : x.st === 2 ? 'läuft' : !fin ? 'abgesagt' : x.ac === 10 ? `n. V. ${x.g[0]}:${x.g[1]}` : x.ac === 11 ? `n. P. ${x.g[0]}:${x.g[1]}` : 'Beendet',
     fsId: x.id, fsH: x.hp, fsA: x.ap, src: {},
+    // Spielphase während des Spiels (für frühe Abrechnung): Fussball 12/13 Halbzeiten, 38 Pause;
+    // Eishockey 14/15/16 Drittel, 46 Pause
+    ph: x.st === 2 ? x.ac : null,
   };
   if (sport === T) ev.tour = x.lg.replace(/^(ATP|WTA) - SINGLES:\s*/, '');
   return ev;
@@ -702,7 +705,7 @@ function payload(need) {
     // Alte Wette auf ein Spiel aus einer anderen Quelle: Resultat vom Flashscore-Zwilling nehmen.
     const tw = fsId && !ev.id.startsWith('fs') && !ev.done && !ev.void && store.get('fs' + fsId);
     if (tw && (tw.done || tw.void || tw.state !== 'pre')) {
-      for (const k of ['state', 'done', 'void', 'sh', 'sa', 'win', 'h1', 'et', 'ot', 'txt']) pub[k] = tw[k];
+      for (const k of ['state', 'done', 'void', 'sh', 'sa', 'win', 'h1', 'et', 'ot', 'txt', 'ph']) pub[k] = tw[k];
     }
     // Modellquoten nur, wenn 24 Stunden vor dem Spiel immer noch kein Buchmacher Quoten hat.
     if (ev.book === 'Modell' && ev.start - now > DAY) { pub.m = {}; pub.cmp = {}; pub.wait = true; }
@@ -716,9 +719,9 @@ function payload(need) {
 function evFor(id) {
   const ev = store.get(id);
   const tw = ev?.fsId && !id.startsWith('fs') && !ev.done && !ev.void && store.get('fs' + ev.fsId);
-  if (!tw || !(tw.done || tw.void)) return ev;
+  if (!tw || tw.state === 'pre') return ev;
   const x = { ...ev };
-  for (const k of ['state', 'done', 'void', 'sh', 'sa', 'win', 'h1', 'et', 'ot', 'txt']) x[k] = tw[k];
+  for (const k of ['state', 'done', 'void', 'sh', 'sa', 'win', 'h1', 'et', 'ot', 'txt', 'ph']) x[k] = tw[k];
   return x;
 }
 function liveBets(bets = []) {
@@ -727,7 +730,9 @@ function liveBets(bets = []) {
     for (const l of b.legs || []) {
       if (l.res) continue;
       const e = evFor(l.ev), r = e && evalLeg(l, e);
-      if (r) { l.res = r; l.score = scoreText(e); }
+      if (r) { l.res = r; l.score = scoreText(e); continue; }
+      const early = e && evalLegEarly(l, e);
+      if (early) { l.res = early; l.score = earlyText(e); l.early = true; }
     }
     const out = settleBet(b);
     // pend: entschieden, aber beim Besitzer noch nicht ausbezahlt

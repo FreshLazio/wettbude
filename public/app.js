@@ -1,4 +1,4 @@
-import { evalLeg, settleBet, betOdds, scoreText, insured, INS, nRows, boostPct, BOOST, MAX_WIN, capWin } from './settle.js';
+import { evalLeg, evalLegEarly, earlyText, settleBet, betOdds, scoreText, insured, INS, nRows, boostPct, BOOST, MAX_WIN, capWin } from './settle.js';
 import { combinable, groupOdds } from './builder.js';
 
 const LS = 'wettbude.v1', START = 500, MIN = 0.5;
@@ -150,7 +150,10 @@ function settle() {
       const e = byId.get(l.ev);
       if (!e) continue;
       const res = evalLeg(l, e);
-      if (res) { l.res = res; l.score = scoreText(e); changed = true; }
+      if (res) { l.res = res; l.score = scoreText(e); changed = true; continue; }
+      // Schon sicher, obwohl das Spiel noch läuft (z. B. Über 5.5 bei 5:2)
+      const early = evalLegEarly(l, e);
+      if (early) { l.res = early; l.score = earlyText(e); l.early = true; changed = true; }
     }
     const out = settleBet(b);
     if (!out) continue;
