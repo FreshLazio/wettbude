@@ -403,3 +403,22 @@ button.evCard:hover { border-color: #163d2b; }
 .sum.capWarn { background: #fff4df; border-radius: 8px; padding: 8px 10px; color: #7a4b00; }
 .sum.capWarn small { display: block; font-size: 12px; font-weight: 400; color: #8a6a3a; margin-top: 2px; }
 .players .num b, .players .num small { white-space: nowrap; }
+
+/* Trends: Liga- und Team-Tabelle */
+.secHead small.hint { text-transform: none; letter-spacing: 0; font-weight: 400; color: #999; margin-left: 6px; }
+.tblWrap { background: #fff; border: 1px solid #e3e0d8; border-radius: 10px; overflow-x: auto; }
+.trTbl { width: 100%; border-collapse: collapse; font-size: 14px; }
+.trTbl th { text-align: right; font-size: 11px; font-weight: 600; color: #777; text-transform: uppercase; letter-spacing: .03em; padding: 9px 10px; border-bottom: 1px solid #e3e0d8; white-space: nowrap; background: #faf9f6; }
+.trTbl th:nth-child(-n+2) { text-align: left; }
+.trTbl th[data-act] { cursor: pointer; user-select: none; }
+.trTbl th[data-act]:hover { color: #163d2b; }
+.trTbl th.on { color: #163d2b; background: #eef5f0; }
+.trTbl td { text-align: right; padding: 7px 10px; border-top: 1px solid #f0ede6; vertical-align: middle; white-space: nowrap; }
+.trTbl tr:first-child td { border-top: 0; }
+.trTbl td small { display: block; font-size: 11px; color: #888; }
+.trTbl td.rk { text-align: center; color: #999; font-weight: 700; width: 28px; }
+.trTbl td.nm { text-align: left; white-space: normal; min-width: 150px; }
+.trTbl td.nm .trBar { margin-top: 4px; max-width: 220px; }
+.moreBtn { display: block; margin: 8px auto 0; font: inherit; font-weight: 600; color: #163d2b; background: #fff; border: 1px solid #c9d8ce; border-radius: 8px; padding: 7px 16px; cursor: pointer; }
+.moreBtn:hover { background: #eef5f0; }
+@media (max-width: 600px) { .trTbl { font-size: 13px; } .trTbl td, .trTbl th { padding: 6px 7px; } .trTbl .c-avg, .trTbl .c-p { display: none; } }

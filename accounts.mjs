@@ -143,21 +143,31 @@ export function accounts({ dataDir, enrich = (b) => b }) {
     const lg = new Map(), tm = new Map();
     const add = (m, k, x) => {
       if (!k) return;
-      const r = m.get(k) || { k, n: 0, h: 0, who: new Set(), w: 0, l: 0, sp: x.sp };
-      r.n++; r.who.add(x.who);
+      const r = m.get(k) || { k, n: 0, h: 0, who: new Set(), w: 0, l: 0, sp: x.sp, net: 0, best: 0, bestWho: '', stake: 0, odds: 0 };
+      r.n++; r.who.add(x.who); r.odds += x.o || 0;
       if (x.t > now - 2 * 864e5) r.h++;
       if (x.res === 'won') r.w++; else if (x.res === 'lost') r.l++;
+      // Geld: Ein Schein wird zu gleichen Teilen auf seine Tipps verteilt (Kombi mit 4 Tipps: je ¼)
+      r.net += x.net; r.stake += x.stake;
+      if (x.win > r.best) { r.best = x.win; r.bestWho = x.who; }
       m.set(k, r);
     };
-    for (const b of all) for (const l of b.legs || []) {
-      const x = { sp: l.sp, t: b.t, who: b.who, res: l.res };
-      add(lg, l.lg, x);
-      // Team: das getippte Team, sonst (Tore, Handicap …) beide Teams des Spiels
-      const sides = String(l.match || '').split(' – ').filter(Boolean);
-      for (const s of sides.includes(l.pick) ? [l.pick] : sides) add(tm, s, x);
+    for (const b of all) {
+      const legs = b.legs || [], parts = legs.length || 1;
+      const settled = b.status === 'won' || b.status === 'lost';
+      const net = settled ? ((b.payout || 0) - b.stake) / parts : 0;
+      const win = b.status === 'won' ? (b.payout || 0) - b.stake : 0;
+      for (const l of legs) {
+        const x = { sp: l.sp, t: b.t, who: b.who, res: l.res, o: +l.o || 0, net, stake: settled ? b.stake / parts : 0, win };
+        add(lg, l.lg, x);
+        // Team: das getippte Team, sonst (Tore, Handicap …) beide Teams des Spiels
+        const sides = String(l.match || '').split(' – ').filter(Boolean);
+        for (const s of sides.includes(l.pick) ? [l.pick] : sides) add(tm, s, x);
+      }
     }
-    const top = (m) => [...m.values()].sort((a, b) => b.n - a.n || b.h - a.h).slice(0, 10)
-      .map((r) => ({ k: r.k, n: r.n, h: r.h, p: r.who.size, w: r.w, l: r.l, sp: r.sp }));
+    // Ganze Tabelle (höchstens 200), sortiert nach Anzahl Tipps
+    const top = (m) => [...m.values()].sort((a, b) => b.n - a.n || b.h - a.h).slice(0, 200)
+      .map((r) => ({ k: r.k, n: r.n, h: r.h, p: r.who.size, w: r.w, l: r.l, sp: r.sp, net: r2(r.net), roi: r.stake ? Math.round(r.net / r.stake * 100) : null, best: r2(r.best), bestWho: r.bestWho, avg: r2(r.odds / r.n) }));
 
     const done = all.filter((b) => b.status === 'won' || b.status === 'lost');
     const won = done.filter((b) => b.status === 'won'), lost = done.filter((b) => b.status === 'lost');
@@ -191,6 +201,14 @@ export function accounts({ dataDir, enrich = (b) => b }) {
     // Heissestes Team: am meisten Tipps in den letzten 48 Stunden
     const hot = [...tm.values()].sort((a, c) => c.h - a.h)[0];
     if (hot?.h >= 2) ev.push({ icon: '🔥', title: 'Heissestes Team', who: hot.k, val: `${hot.h} Tipps`, text: `in den letzten 48 Stunden, von ${hot.who.size} Spieler${hot.who.size === 1 ? '' : 'n'}` });
+    // Liga-Rekorde (mindestens 5 entschiedene Tipps, damit Zufall nicht zu stark zählt)
+    const L = [...lg.values()].filter((r) => r.w + r.l >= 5);
+    const sharpL = L.slice().sort((a, c) => c.w / (c.w + c.l) - a.w / (a.w + a.l) || (c.w + c.l) - (a.w + a.l))[0];
+    if (sharpL) ev.push({ icon: '🏹', title: 'Treffsicherste Liga', who: sharpL.k, val: `${Math.round(sharpL.w / (sharpL.w + sharpL.l) * 100)} % richtig`, text: `${sharpL.w} von ${sharpL.w + sharpL.l} Tipps` });
+    const richL = [...lg.values()].filter((r) => r.net > 0).sort((a, c) => c.net - a.net)[0];
+    if (richL) ev.push({ icon: '🤑', title: 'Lukrativste Liga', who: richL.k, val: `+CHF ${r2(richL.net).toFixed(2)}`, text: `Gewinn aller Spieler, ${richL.n} Tipps` });
+    const poorL = [...lg.values()].filter((r) => r.net < 0).sort((a, c) => a.net - c.net)[0];
+    if (poorL) ev.push({ icon: '🕳️', title: 'Teuerste Liga', who: poorL.k, val: `−CHF ${r2(-poorL.net).toFixed(2)}`, text: `Verlust aller Spieler, ${poorL.n} Tipps` });
     // Mutigster Spieler: höchste durchschnittliche Quote (mindestens 3 Scheine)
     const brave = [...new Set(all.map((x) => x.who))].map((w) => { const l = all.filter((x) => x.who === w); return [w, l.length, l.reduce((s, x) => s + oddsOf(x), 0) / l.length]; })
       .filter((x) => x[1] >= 3).sort((a, c) => c[2] - a[2])[0];

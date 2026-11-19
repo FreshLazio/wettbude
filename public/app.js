@@ -455,7 +455,7 @@ function betCard(b) {
 
 /* ---------- Andere Spieler: Rangliste und ihre Wetten der letzten 7 Tage ---------- */
 
-const P = { list: null, at: 0, sel: null, detail: null, err: '' };
+const P = { list: null, at: 0, sel: null, detail: null, err: '', tSort: {}, tAll: {} };
 async function loadPlayers(force) {
   if (!S.tok || (!force && P.list && Date.now() - P.at < 60e3)) return;
   P.at = Date.now();
@@ -533,13 +533,28 @@ function renderTrends() {
   const T = P.trends;
   if (!T) { $('#main').innerHTML = `<p class="empty">${P.err ? esc(P.err) : 'Trends werden geladen …'}</p>`; return; }
   const flame = (h) => (h >= 6 ? '🔥🔥' : h >= 3 ? '🔥' : '');
-  const rank = (rows, what) => {
-    if (!rows.length) return '<p class="empty">Noch keine Wetten in den letzten 7 Tagen.</p>';
-    const mx = Math.max(...rows.map((r) => r.n));
-    return `<div class="trList">${rows.map((r, i) => `<div class="trRow">
-      <span class="rank">${i + 1}</span>
-      <span class="trName"><b>${esc(r.k)} ${flame(r.h)}</b><small>${r.p} Spieler · ${r.h} in 48 h${r.w + r.l ? ` · <span class="pos">${r.w} ✓</span> <span class="neg">${r.l} ✗</span>` : ''}</small><i class="trBar" style="width:${Math.max(4, r.n / mx * 100)}%"></i></span>
-      <span class="trN">${r.n}<small>${what}</small></span></div>`).join('')}</div>`;
+  // Tabelle der Ligen/Teams: Spalten anklickbar zum Sortieren, zuerst die besten 10, «Alle anzeigen» für alles.
+  // Gewinn/Verlust: jeder Schein wird gleichmässig auf seine Tipps verteilt (Kombi mit 4 Tipps: je ¼).
+  const COLS = [['n', 'Tipps'], ['hit', 'Treffer'], ['net', '+/−'], ['roi', 'Rendite'], ['best', 'Grösster Gewinn'], ['avg', 'Ø Quote'], ['p', 'Spieler']];
+  const hit = (r) => (r.w + r.l ? r.w / (r.w + r.l) : -1);
+  const rank = (id, rows, label) => {
+    if (!rows?.length) return '<p class="empty">Noch keine Wetten in den letzten 7 Tagen.</p>';
+    const s = P.tSort[id] || 'n', all = P.tAll[id];
+    const val = (r) => (s === 'hit' ? hit(r) : s === 'roi' ? r.roi ?? -1e9 : r[s] ?? 0);
+    const sorted = rows.slice().sort((a, b) => val(b) - val(a) || b.n - a.n);
+    const shown = all ? sorted : sorted.slice(0, 10), mx = Math.max(1, ...rows.map((r) => r.n));
+    return `<div class="tblWrap"><table class="trTbl"><thead><tr><th>#</th><th>${label}</th>${COLS.map(([k, t]) => `<th class="c-${k} ${k === s ? 'on' : ''}" data-act="tSort" data-id="${id}" data-k="${k}">${t}${k === s ? ' ▾' : ''}</th>`).join('')}</tr></thead>
+      <tbody>${shown.map((r, i) => `<tr>
+        <td class="rk">${i + 1}</td>
+        <td class="nm"><b>${esc(r.k)} ${flame(r.h)}</b><i class="trBar" style="width:${Math.max(4, r.n / mx * 100)}%"></i></td>
+        <td class="c-n">${r.n}<small>${r.h} in 48 h</small></td>
+        <td class="c-hit">${r.w + r.l ? Math.round(hit(r) * 100) + ' %' : '–'}<small><span class="pos">${r.w} ✓</span> <span class="neg">${r.l} ✗</span></small></td>
+        <td class="c-net">${r.roi == null ? '–' : signed(r.net)}</td>
+        <td class="c-roi">${r.roi == null ? '–' : `<b class="${r.roi > 0 ? 'pos' : r.roi < 0 ? 'neg' : ''}">${r.roi > 0 ? '+' : ''}${r.roi} %</b>`}</td>
+        <td class="c-best">${r.best ? `<b class="pos">+${chf(r.best)}</b><small>${esc(r.bestWho)}</small>` : '–'}</td>
+        <td class="c-avg">${r.avg ? q(r.avg) : '–'}</td>
+        <td class="c-p">${r.p}</td></tr>`).join('')}</tbody></table></div>
+      ${rows.length > 10 ? `<button class="moreBtn" data-act="tAll" data-id="${id}">${all ? 'Nur die ersten 10' : `Alle ${rows.length} anzeigen`}</button>` : ''}`;
   };
   const o = T.totals || {}, SP = Object.fromEntries(SPORTS);
   const medal = ['🥇', '🥈', '🥉'];
@@ -571,10 +586,8 @@ function renderTrends() {
     <h4 class="secHead">Spannende Ereignisse</h4>
     <div class="evGrid">${T.events.map((e, i) => `<${e.bet ? 'button' : 'div'} class="evCard ${P.evSel === i ? 'sel' : ''}" ${e.bet ? `data-act="evShow" data-i="${i}"` : ''}><span class="evIcon">${e.icon}</span><div><small>${esc(e.title)}</small><b>${esc(e.who)}</b><strong>${esc(e.val || '')}</strong><small>${esc(e.text || '')}</small>${e.bet ? `<small class="more">${P.evSel === i ? 'Schein ausblenden' : 'Schein ansehen ›'}</small>` : ''}</div></${e.bet ? 'button' : 'div'}>`).join('') || '<p class="empty">Noch nichts passiert.</p>'}</div>
     ${T.events[P.evSel]?.bet ? `<div class="bets evBet">${betCard({ ...T.events[P.evSel].bet, who: T.events[P.evSel].who })}</div>` : ''}
-    <div class="twoCol">
-      <section><h4 class="secHead">Beliebteste Teams</h4>${rank(T.teams, 'Tipps')}</section>
-      <section><h4 class="secHead">Beliebteste Ligen</h4>${rank(T.leagues, 'Tipps')}</section>
-    </div>
+    <h4 class="secHead">Ligen <small class="hint">Spalte antippen zum Sortieren · Gewinn eines Scheins wird auf seine Tipps verteilt</small></h4>${rank('leagues', T.leagues, 'Liga')}
+    <h4 class="secHead">Teams</h4>${rank('teams', T.teams, 'Team')}
     ${spSum ? `<h4 class="secHead">Tipps nach Sportart</h4><div class="trList">${T.sports.map((s) => `<div class="trRow"><span class="rank"></span><span class="trName"><b>${esc(SP[s.k] || s.k)}</b><i class="trBar" style="width:${Math.max(4, s.n / spMax * 100)}%"></i></span><span class="trN">${Math.round(s.n / spSum * 100)} %<small>${s.n} Tipps</small></span></div>`).join('')}</div>` : ''}`;
 }
 
@@ -878,6 +891,8 @@ document.addEventListener('click', (ev) => {
   if (!b || b.tagName === 'SELECT') return;
   const a = b.dataset.act;
   if (a === 'pick') return togglePick(b.dataset.k);
+  if (a === 'tSort') { P.tSort[b.dataset.id] = b.dataset.k; renderTrends(); return; }
+  if (a === 'tAll') { P.tAll[b.dataset.id] = !P.tAll[b.dataset.id]; renderTrends(); return; }
   if (a === 'evShow') { const i = +b.dataset.i; P.evSel = P.evSel === i ? null : i; renderTrends(); return; }
   if (a === 'tab') { V.tab = b.dataset.tab; if (V.tab === 'spieler') { P.sel = null; loadPlayers(true); } if (V.tab === 'trends') { P.evSel = null; loadPlayers(true); } }
   else if (a === 'pl') return void loadPlayer(b.dataset.n);
