@@ -771,6 +771,7 @@ async function accApi(req, res, u) {
     else if (p === 'profile' && req.method === 'GET') out = await acc.load(token, u.searchParams.get('rev'));
     else if (p === 'profile' && req.method === 'PUT') out = await acc.save(token, await readBody(req));
     else if (p === 'gift' && req.method === 'POST') out = await acc.gift(token, await readBody(req, 10000));
+    else if (p === 'void' && req.method === 'POST') out = await acc.voidBet(token, await readBody(req, 10000));
     else if (p === 'rescale' && req.method === 'POST') out = await acc.rescale(token, await readBody(req, 10000));
     else if (p === 'rename' && req.method === 'POST') out = await acc.rename(token, (await readBody(req, 10000)).name);
     else return send(404, { error: 'Nicht gefunden' });

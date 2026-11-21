@@ -336,6 +336,29 @@ export function accounts({ dataDir, enrich = (b) => b }) {
         return { name: u.name, bal: u.state.bal, f: r(f) };
       });
     },
+    // Nur Admin: einen vertippten Schein löschen. Er verschwindet ganz (niemand sieht ihn mehr),
+    // der Einsatz kommt zurück. War er schon gewonnen, wird die Auszahlung abgezogen.
+    async voidBet(token, { name, id, t }) {
+      const [me] = await user(token);
+      if (me !== ADMIN) throw err(403, 'Nur der Admin kann das.');
+      const [tk] = await resolve(keyOf(name));
+      return locked(tk, async () => {
+        const u = await get('user:' + tk);
+        if (!u || u.moved) throw err(404, 'Diesen Spieler gibt es nicht.');
+        const s = u.state || {}, r = (v) => Math.round(v * 100) / 100;
+        const bets = Array.isArray(s.bets) ? s.bets : [];
+        const i = bets.findIndex((b) => String(b.id) === String(id) && +b.t === +t);
+        if (i < 0) throw err(404, 'Diesen Schein gibt es nicht (mehr).');
+        const b = bets[i];
+        // Offen/verloren: Einsatz zurück. Gewonnen/ungültig/versichert: was schon ausbezahlt wurde, wieder abziehen.
+        const delta = b.stake - (b.status === 'open' ? 0 : b.payout || 0);
+        u.state = { ...s, bets: bets.filter((_, j) => j !== i), bal: r((+s.bal || 0) + delta) };
+        u.rev++; u.at = Date.now();
+        await set('user:' + tk, u);
+        board = null;
+        return { name: u.name, bal: u.state.bal, delta: r(delta) };
+      });
+    },
     async player(token, name) {
       await user(token);
       const [, u] = await resolve(keyOf(name));

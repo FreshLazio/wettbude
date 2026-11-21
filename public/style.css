@@ -422,3 +422,15 @@ button.evCard:hover { border-color: #163d2b; }
 .moreBtn { display: block; margin: 8px auto 0; font: inherit; font-weight: 600; color: #163d2b; background: #fff; border: 1px solid #c9d8ce; border-radius: 8px; padding: 7px 16px; cursor: pointer; }
 .moreBtn:hover { background: #eef5f0; }
 @media (max-width: 600px) { .trTbl { font-size: 13px; } .trTbl td, .trTbl th { padding: 6px 7px; } .trTbl .c-avg, .trTbl .c-p { display: none; } }
+
+/* Exaktes Resultat: Heimsiege | Unentschieden | Auswärtssiege */
+.csGrid { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: 8px; align-items: start; }
+.csCol { display: flex; flex-direction: column; gap: 6px; min-width: 0; }
+.csCol > span { font-size: 12px; font-weight: 600; color: #666; text-align: center; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.csCol .odd { width: 100%; }
+
+/* Admin: Schein annullieren */
+.betFoot button.annul { margin-left: auto; align-self: center; font: inherit; font-size: 12px; font-weight: 600; color: #9b2c2c; background: #fff; border: 1px solid #e8c4c4; border-radius: 8px; padding: 5px 10px; cursor: pointer; }
+.betFoot button.annul:hover { background: #fcecec; }
+.csCol .odd { flex-direction: row; justify-content: space-between; align-items: center; min-height: 0; padding: 6px 10px; gap: 6px; }
+.csCol .odd > span { font-size: 13px; font-weight: 600; color: #333; }

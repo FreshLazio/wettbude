@@ -341,7 +341,20 @@ function extraHtml(e) {
   lines('h1ou', '1. Halbzeit Über/Unter', 'Tore');
   lines('th', 'Tore ' + esc(e.home.n), 'Tore');
   lines('ta', 'Tore ' + esc(e.away.n), 'Tore');
-  mk('cs');
+  // Exaktes Resultat wie bei Interwetten: links Heimsiege, Mitte Unentschieden, rechts Auswärtssiege
+  if (M.cs) {
+    const all = Object.keys(M.cs).filter((p) => p !== 'line');
+    const sc = (p) => p.split(':').map(Number);
+    const ok = all.filter((p) => /^\d+:\d+$/.test(p));
+    const byGoals = (a, b) => { const [h1, a1] = sc(a), [h2, a2] = sc(b); return Math.max(h1, a1) - Math.max(h2, a2) || Math.min(h1, a1) - Math.min(h2, a2); };
+    const col = (list, title) => `<div class="csCol"><span>${title}</span>${list.sort(byGoals).map((p) => oddBtn(e, 'cs', p, p)).join('')}</div>`;
+    const rest = all.filter((p) => !ok.includes(p));
+    h += `<div class="mk">${head(mName('cs'), M.cs[all[0]]?.b)}<div class="csGrid">
+      ${col(ok.filter((p) => sc(p)[0] > sc(p)[1]), esc(e.home.n))}
+      ${col(ok.filter((p) => sc(p)[0] === sc(p)[1]), 'Unentschieden')}
+      ${col(ok.filter((p) => sc(p)[0] < sc(p)[1]), esc(e.away.n))}
+    </div>${rest.length ? `<div class="odds">${rest.map((p) => oddBtn(e, 'cs', p, p)).join('')}</div>` : ''}</div>`;
+  }
   mk('gsa', null, 'Torschütze (trifft irgendwann)');
   mk('gsf');
   const books = Object.entries(e.cmp || {});
@@ -435,7 +448,8 @@ const nextStart = (b) => Math.min(...b.legs.filter((l) => !l.res).map((l) => l.s
 const byKickoff = (list) => list.slice().sort((a, b) => nextStart(a) - nextStart(b) || a.t - b.t);
 
 const betName = (b) => (b.sys ? `System ${b.sys} aus ${b.legs.length}` : b.legs.length > 1 ? `Kombi ${b.legs.length}-fach` : 'Einzelwette');
-function betCard(b) {
+// adminOf: Name des Spielers, wenn der Admin den Schein annullieren darf (Spieler-Ansicht)
+function betCard(b, adminOf) {
   const odds = betOdds(b);
   const label0 = { open: 'Offen', won: 'Gewonnen', lost: 'Verloren', void: 'Ungültig' }[b.status];
   // Offene Kombi: wie viele Tipps schon richtig sind
@@ -449,7 +463,7 @@ function betCard(b) {
   return `<div class="bet ${b.who ? 'st-' + b.status : ''}">
     <div class="betHead"><div>${b.who ? `<b class="who">${esc(b.who)}</b>` : ''}<b>${betName(b)}</b><small>${new Date(b.t).toLocaleString('de-CH', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</small>${prog}</div><span class="badge ${b.status}" ${b.pend ? 'title="Steht fest. Ausbezahlt wird, sobald der Spieler die Seite öffnet."' : ''}>${label}${b.pend && (b.status === 'won' || b.ins) ? ' · Auszahlung folgt' : ''}</span></div>
     ${legs.map((l) => `<div class="leg ${l.res || ''}"><i class="dot ${l.res || ''}"></i><div><b>${esc(l.pick)}</b><small>${esc(l.mk)} · ${esc(l.match)}${l.lg ? ' · ' + esc(l.lg) : ''}</small><small>${l.res ? 'Resultat ' + esc(l.score) + (l.res === 'void' ? ' · ungültig, Quote 1.00' : '') : legState(l)}</small></div><span class="q">${q(l.o)}</span></div>`).join('')}
-    <div class="betFoot"><div><span>Einsatz${b.sys ? ` (${nRows(b.legs.length, b.sys)} Reihen à ${chf(b.stake / nRows(b.legs.length, b.sys))})` : ''}</span><b>CHF ${chf(b.stake)}</b></div><div><span>Gesamtquote</span><b>${q(odds)}</b></div><div><span>${b.status === 'open' ? 'Möglicher Gewinn' : 'Auszahlung'}</span><b class="${b.status === 'won' ? 'pos' : ''}">CHF ${chf(b.status === 'open' ? capWin(b.stake * odds) : b.payout)}</b>${(b.status === 'open' && b.stake * odds > MAX_WIN) || b.capped ? `<small class="cap">Höchstgewinn</small>` : ''}</div></div>
+    <div class="betFoot"><div><span>Einsatz${b.sys ? ` (${nRows(b.legs.length, b.sys)} Reihen à ${chf(b.stake / nRows(b.legs.length, b.sys))})` : ''}</span><b>CHF ${chf(b.stake)}</b></div><div><span>Gesamtquote</span><b>${q(odds)}</b></div><div><span>${b.status === 'open' ? 'Möglicher Gewinn' : 'Auszahlung'}</span><b class="${b.status === 'won' ? 'pos' : ''}">CHF ${chf(b.status === 'open' ? capWin(b.stake * odds) : b.payout)}</b>${(b.status === 'open' && b.stake * odds > MAX_WIN) || b.capped ? `<small class="cap">Höchstgewinn</small>` : ''}</div>${adminOf && typeof adminOf === 'string' ? `<button class="annul" data-act="annul" data-n="${esc(adminOf)}" data-id="${esc(b.id)}" data-t="${b.t}" title="Nur Admin: vertippten Schein löschen, Einsatz zurück">Löschen</button>` : ''}</div>
   </div>`;
 }
 
@@ -505,8 +519,8 @@ function renderPlayers() {
       <h4 class="secHead">Plus und Minus pro Tag</h4>
       ${dayBars(done)}
       <h4 class="secHead">Abgerechnet in den letzten 7 Tagen (${done.length})</h4>
-      <div class="bets">${done.map(betCard).join('') || '<p class="empty">Keine abgerechneten Wetten in den letzten 7 Tagen.</p>'}</div>
-      ${open.length ? `<h4 class="secHead">Noch offen (${open.length})</h4><div class="bets">${byKickoff(open).map(betCard).join('')}</div>` : ''}`;
+      <div class="bets">${done.map((b) => betCard(b, P.admin && d.name)).join('') || '<p class="empty">Keine abgerechneten Wetten in den letzten 7 Tagen.</p>'}</div>
+      ${open.length ? `<h4 class="secHead">Noch offen (${open.length})</h4><div class="bets">${byKickoff(open).map((b) => betCard(b, P.admin && d.name)).join('')}</div>` : ''}`;
     return;
   }
   if (!P.list) { $('#main').innerHTML = `<p class="empty">${P.err ? esc(P.err) : 'Spieler werden geladen …'}</p>`; return; }
@@ -926,6 +940,16 @@ document.addEventListener('click', (ev) => {
     if (!confirm(`${who} CHF ${chf(x)} geben?`)) return;
     api('gift', { method: 'POST', body: JSON.stringify({ name: who, amount: x }) }).then((r) => {
       toast(`${r.name} hat jetzt CHF ${chf(r.bal)}`);
+      P.list = null; loadPlayers(true); loadPlayer(who);
+      if (r.name === S.name) pull();
+    }).catch((e) => toast(e.message));
+    return;
+  }
+  else if (a === 'annul') {
+    const who = b.dataset.n;
+    if (!confirm(`Diesen Schein von ${who} löschen (vertippt)?\n\nEr verschwindet ganz, niemand sieht ihn mehr. ${who} bekommt den Einsatz zurück. War er gewonnen, wird die Auszahlung wieder abgezogen.`)) return;
+    api('void', { method: 'POST', body: JSON.stringify({ name: who, id: b.dataset.id, t: +b.dataset.t }) }).then((r) => {
+      toast(`Gelöscht: ${r.name} ${r.delta >= 0 ? '+' : ''}CHF ${chf(r.delta)}, Guthaben jetzt CHF ${chf(r.bal)}`);
       P.list = null; loadPlayers(true); loadPlayer(who);
       if (r.name === S.name) pull();
     }).catch((e) => toast(e.message));
