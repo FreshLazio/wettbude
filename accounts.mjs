@@ -378,14 +378,14 @@ export function accounts({ dataDir, enrich = (b) => b }) {
     async players(token) {
       const [me] = await user(token);
       const admin = me === ADMIN;
-      if (board && Date.now() - board.at < 60e3) return { list: board.list, upcoming: board.upcoming, recent: board.recent, trends: board.trends, weeks: board.weeks, admin };
+      if (board && Date.now() - board.at < 60e3) return { list: board.list, upcoming: board.upcoming, recent: board.recent, trends: board.trends, weeks: board.weeks, onEv: board.onEv, admin };
       // Alle Profile: in Upstash per SCAN über «wb:user:*», lokal alle Schlüssel der Datei.
       const keys = [];
       if (remote) {
         let cur = '0';
         do { const [next, found] = await cmd(['SCAN', cur, 'MATCH', 'wb:user:*', 'COUNT', '200']); cur = String(next); keys.push(...found.map((x) => x.slice(3))); } while (cur !== '0' && keys.length < 5000);
       } else keys.push(...Object.keys(store()).filter((x) => x.startsWith('user:')));
-      const list = [], next = [], last = [], all = [], people = [], hist = [];
+      const list = [], next = [], last = [], all = [], people = [], hist = [], onEv = {};
       const now = Date.now();
       // Nächster Anpfiff eines Scheins: frühester Start der noch offenen Tipps
       const kick = (b) => Math.min(...(b.legs || []).filter((l) => !l.res).map((l) => +l.start || Infinity), Infinity);
@@ -398,6 +398,14 @@ export function accounts({ dataDir, enrich = (b) => b }) {
         for (const b of mine) {
           all.push(b);
           if (b.status === 'open') next.push({ ...b, k: kick(b) });
+          // Wer auf welches Spiel getippt hat (offene Tipps), für die Anzeige in der Spielliste
+          if (b.status === 'open') for (const l of b.legs || []) {
+            if (l.res || !l.ev) continue;
+            const arr = (onEv[l.ev] ||= []);
+            let x = arr.find((y) => y.n === u.name);
+            if (!x) arr.push((x = { n: u.name, t: [] }));
+            if (x.t.length < 4) x.t.push({ p: l.pick || l.p, o: l.o, k: (b.legs || []).length > 1 ? (b.sys ? 'System' : 'Kombi') : '' });
+          }
           else if (b.status === 'won' || b.status === 'lost') last.push(b);
         }
         // Aktuelle Serie: gleiche Ergebnisse in Folge, neueste zuerst (ungültige zählen nicht)
@@ -422,8 +430,8 @@ export function accounts({ dataDir, enrich = (b) => b }) {
       const recent = last.sort((a, b) => playAt(b) - playAt(a)).slice(0, 40);
       const trends = trendsOf(all, people);
       const weeks = weeksOf(hist);
-      board = { at: Date.now(), list, upcoming, recent, trends, weeks };
-      return { list, upcoming, recent, trends, weeks, admin };
+      board = { at: Date.now(), list, upcoming, recent, trends, weeks, onEv };
+      return { list, upcoming, recent, trends, weeks, onEv, admin };
     },
     // Nur der Admin (Rafael) kann anderen Geld geben. Das Startbudget steigt mit, damit es nicht als Gewinn zählt.
     async gift(token, { name, amount }) {

@@ -1,0 +1,49 @@
+WETTBUDE ONLINE STELLEN (Render, wie bei Kirchenfeldl)
+======================================================
+
+0. Dateien bereitlegen
+   - "upload-vorbereiten.bat" doppelklicken. Danach liegt im Ordner "upload"
+     genau das, was auf GitHub gehört:
+       server.mjs  fd.mjs  tsdb.mjs  model.mjs  flashscore.mjs  accounts.mjs
+       package.json  public/  seed/
+   - NICHT hochladen: data/ (enthält die lokalen Profile), start.bat, test-settle.mjs
+
+1. GitHub
+   - github.com > New repository > Name "wettbude" > Public > Create
+   - "uploading an existing file" anklicken
+   - Die sechs .mjs-Dateien und package.json aus "upload" hineinziehen > Commit
+   - Danach die Ordner public und seed einzeln hineinziehen > Commit
+     (Ordner gehen beim gemeinsamen Ziehen manchmal verloren.)
+
+2. Upstash-Zugang von Kirchenfeldl kopieren (für die Profile)
+   - dashboard.render.com > den Kirchenfeldl-Dienst öffnen > Environment
+   - Die Werte von UPSTASH_REDIS_REST_URL und UPSTASH_REDIS_REST_TOKEN kopieren.
+     Die Wettbude speichert in derselben Datenbank, aber mit eigenem Präfix «wb:»,
+     die Kirchenfeldl-Daten bleiben unberührt.
+
+3. Render
+   - dashboard.render.com > New > Web Service > das Repo "wettbude" wählen
+   - Region: Frankfurt
+   - Build Command:  npm install
+   - Start Command:  node server.mjs
+   - Instance Type:  Free
+   - Environment Variables > Add:
+       UPSTASH_REDIS_REST_URL    = (Wert aus Schritt 2)
+       UPSTASH_REDIS_REST_TOKEN  = (Wert aus Schritt 2)
+   - Create Web Service. Nach 1 bis 3 Minuten läuft die Seite unter
+     https://<name>.onrender.com
+
+4. Prüfen
+   - Unter "Logs" muss stehen: «Profile werden in Upstash gespeichert».
+     Steht dort «data/users.json», fehlen die zwei Umgebungsvariablen: Dann gehen
+     alle Profile beim nächsten Neustart verloren.
+   - Nach ein paar Minuten: «Flashscore: … zugeordnet». Fehlt das, sperrt
+     Flashscore den Server, und es gibt nur Quoten von ESPN.
+   - Am PC ein Profil anlegen, am Handy mit Name und Passwort anmelden.
+
+Was man wissen muss
+   - Die Gratis-Stufe schläft nach 15 Minuten ohne Besuch ein. Der erste Aufruf
+     danach dauert etwa eine Minute, dann holt der Server alle Quoten neu.
+   - Offene Wetten werden abgerechnet, sobald man die Seite wieder öffnet.
+   - Ändert sich etwas am Programm: "upload-vorbereiten.bat" laufen lassen und die
+     geänderten Dateien auf GitHub neu hochladen. Render stellt sie von selbst online.

@@ -47,15 +47,18 @@ export function evalLeg(leg, ev) {
 
   // 1. Halbzeit: braucht den Halbzeitstand, sonst ungültig.
   if (m === 'h1' || m.startsWith('h1ou')) {
-    if (!ev.h1) return 'void';
+    // U19: Pausenstand kommt mit dem Spielbericht ein paar Tage später, bis dahin offen
+    if (!ev.h1) return ev.u19 && Date.now() - ev.start < 5 * 864e5 ? null : 'void';
     const [hh, ha] = ev.h1;
     return m === 'h1' ? (result(hh, ha) === leg.p ? 'won' : 'lost') : overUnder(hh + ha, leg);
   }
   // Torschützen: nur Tore der regulären Spielzeit, Eigentore zählen nicht.
   if (m === 'gsa' || m === 'gsf') {
-    if (!ev.goals) return 'void';
+    // U19: Torschützen kommen ein paar Tage später (von Hand nachgetragen), bis dahin offen
+    if (!ev.goals) return ev.u19 && Date.now() - ev.start < 5 * 864e5 ? null : 'void';
     const goals = ev.goals.filter((g) => !g.og && g.m <= 90);
     const who = norm(leg.p);
+    if ((ev.np || []).some((n) => norm(n) === who)) return 'void'; // hat nicht gespielt: Geld zurück
     if (m === 'gsa') return goals.some((g) => norm(g.n) === who) ? 'won' : 'lost';
     return goals.length && norm(goals[0].n) === who ? 'won' : 'lost';
   }

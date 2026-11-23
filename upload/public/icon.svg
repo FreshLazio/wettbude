@@ -1,0 +1,35 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <defs>
+    <linearGradient id="silver" x1="0" y1="0" x2="1" y2="1"><stop offset="0" stop-color="#ffffff"/><stop offset=".6" stop-color="#c9d0d6"/><stop offset="1" stop-color="#8e99a3"/></linearGradient>
+    <linearGradient id="field" x1="0" y1="0" x2="0" y2="1"><stop offset="0" stop-color="#2b3550"/><stop offset="1" stop-color="#1d2230"/></linearGradient>
+    <linearGradient id="fire" x1="0" y1="1" x2="0" y2="0"><stop offset="0" stop-color="#d3282c"/><stop offset=".6" stop-color="#ff6b1a"/><stop offset="1" stop-color="#edac1f"/></linearGradient>
+    <radialGradient id="heat" cx=".5" cy=".55" r=".5"><stop offset="0" stop-color="#ff8a1f" stop-opacity=".55"/><stop offset="1" stop-color="#ff8a1f" stop-opacity="0"/></radialGradient>
+    <clipPath id="ballc"><circle cx="32" cy="34" r="10"/></clipPath>
+    <clipPath id="sh"><path d="M32 4 L55 10.5 L55 31 C55 45 45 54.5 32 60 C19 54.5 9 45 9 31 L9 10.5 Z"/></clipPath>
+  </defs>
+  <!-- Grund -->
+  <rect width="64" height="64" rx="14" fill="#1d2230"/>
+  <!-- Schild: Goldrand, Rotrand, marineblaues Feld -->
+  <path d="M32 4 L55 10.5 L55 31 C55 45 45 54.5 32 60 C19 54.5 9 45 9 31 L9 10.5 Z" fill="#edac1f" transform="translate(32 32) scale(1.0) translate(-32 -32)"/>
+  <path d="M32 4 L55 10.5 L55 31 C55 45 45 54.5 32 60 C19 54.5 9 45 9 31 L9 10.5 Z" fill="#d3282c" transform="translate(32 32.6) scale(.9) translate(-32 -32)"/>
+  <path d="M32 4 L55 10.5 L55 31 C55 45 45 54.5 32 60 C19 54.5 9 45 9 31 L9 10.5 Z" fill="url(#field)" transform="translate(32 33) scale(.8) translate(-32 -32)"/>
+  <!-- Glut im Feld -->
+  <g clip-path="url(#sh)" transform="translate(32 33) scale(.8) translate(-32 -32)"><circle cx="32" cy="36" r="26" fill="url(#heat)"/></g>
+  <!-- Flamme (glühender Stahl) oben -->
+  <path d="M32 9.5 C35.5 13.5 37.5 16 36.6 19.6 C38.3 18.6 39.2 17.2 39.4 15.6 C42 19.4 41.2 23.8 37.6 25.6 L26.4 25.6 C22.8 23.8 22 19.4 24.6 15.6 C24.8 17.2 25.7 18.6 27.4 19.6 C26.5 16 28.5 13.5 32 9.5 Z" fill="url(#fire)"/>
+  <g>
+    <path d="M17 15 L40 47" stroke="#1d2230" stroke-width="6.5" stroke-linecap="round"/>
+    <path d="M17 15 L40 47" stroke="url(#silver)" stroke-width="4" stroke-linecap="round"/>
+    <path d="M38 44 L41 48.3 Q42.3 50 44.6 50 L50.5 50" stroke="#1d2230" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <path d="M38 44 L41 48.3 Q42.3 50 44.6 50 L50.5 50" stroke="#edac1f" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </g>
+  <g transform="translate(64 0) scale(-1 1)">
+    <path d="M17 15 L40 47" stroke="#1d2230" stroke-width="6.5" stroke-linecap="round"/>
+    <path d="M17 15 L40 47" stroke="url(#silver)" stroke-width="4" stroke-linecap="round"/>
+    <path d="M38 44 L41 48.3 Q42.3 50 44.6 50 L50.5 50" stroke="#1d2230" stroke-width="6.5" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+    <path d="M38 44 L41 48.3 Q42.3 50 44.6 50 L50.5 50" stroke="#edac1f" stroke-width="4" stroke-linecap="round" stroke-linejoin="round" fill="none"/>
+  </g>
+  <circle cx="32" cy="34" r="11.5" fill="#1d2230"/><circle cx="32" cy="34" r="10" fill="url(#silver)"/><g clip-path="url(#ballc)" fill="#1d2230"><polygon points="32.00,30.00 35.80,32.76 34.35,37.24 29.65,37.24 28.20,32.76"/><polygon points="40.35,22.51 41.87,27.21 37.88,30.11 33.88,27.21 35.41,22.51"/><polygon points="45.51,38.39 41.51,41.29 37.52,38.39 39.04,33.69 43.98,33.69"/><polygon points="32.00,48.20 28.01,45.30 29.53,40.60 34.47,40.60 35.99,45.30"/><polygon points="18.49,38.39 20.02,33.69 24.96,33.69 26.48,38.39 22.49,41.29"/><polygon points="23.65,22.51 28.59,22.51 30.12,27.21 26.12,30.11 22.13,27.21"/></g><g stroke="#1d2230" stroke-width="1.2" stroke-linecap="round"><path d="M32.00 30.00L32.00 27.20"/><path d="M35.80 32.76L38.47 31.90"/><path d="M34.35 37.24L36.00 39.50"/><path d="M29.65 37.24L28.00 39.50"/><path d="M28.20 32.76L25.53 31.90"/></g>
+  <!-- drei Sterne unten -->
+  <g fill="#edac1f"><polygon points="25.50,48.30 26.11,49.76 27.69,49.89 26.48,50.92 26.85,52.46 25.50,51.63 24.15,52.46 24.52,50.92 23.31,49.89 24.89,49.76"/><polygon points="32.00,50.30 32.71,52.02 34.57,52.17 33.16,53.38 33.59,55.18 32.00,54.22 30.41,55.18 30.84,53.38 29.43,52.17 31.29,52.02"/><polygon points="38.50,48.30 39.11,49.76 40.69,49.89 39.48,50.92 39.85,52.46 38.50,51.63 37.15,52.46 37.52,50.92 36.31,49.89 37.89,49.76"/></g>
+</svg>

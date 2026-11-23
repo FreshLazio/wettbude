@@ -295,12 +295,14 @@ function buildBase(ev) {
     // Weitere Tormärkte aus der Linie des Buchmachers berechnet.
     try {
       const lam = (prim[1] === 'mod' && s.lam) || fit(s[prim[1]].w, ou);
-      const der = derive(lam, 'berechnet', { half: !ev.nohalf, skipOu: ou?.line });
+      const der = derive(lam, 'berechnet', { half: !ev.nohalf, skipOu: ou?.line, hf: s.hf });
       for (const k in der) if (!m[k]) m[k] = der[k];
     } catch { /* ohne Zusatzmärkte weiter */ }
   }
   if (s.b365?.gsa) m.gsa = tag(s.b365.gsa, 'bet365');
   if (s.b365?.gsf) m.gsf = tag(s.b365.gsf, 'bet365');
+  if (s.u19gs) m.gsa = s.u19gs;
+  if (s.u19gf) m.gsf = s.u19gf;
   ev.m = m;
   const cmp = {};
   for (const [b, id] of ORDER) if (s[id]?.w) cmp[b] = s[id].w;
@@ -511,32 +513,214 @@ const U19 = path.join(DIR, 'u19.json');
 const U21 = { 'Young Boys': 'young boys', Basel: 'basel', Luzern: 'luzern', 'Zürich': 'zurich', Ticino: 'lugano', 'St. Gallen': 'st gallen', Thun: 'thun', Servette: 'servette', Sion: 'sion', GC: 'grasshoppers?', Lausanne: 'lausanne', Winterthur: 'winterthur', Xamax: 'xamax', Aarau: 'aarau' };
 const plainName = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[.\-]/g, ' ').replace(/\b(fc|bsc|fcz|ss)\b/g, '').replace(/\s+/g, ' ').trim();
 const zDay = (t) => new Date(t).toLocaleDateString('sv-SE', { timeZone: 'Europe/Zurich' });
-// true = U21 spielt am selben Tag, false = U21 spielt in den 3 Tagen davor/danach an einem anderen Tag, null = unbekannt
+// U21 eines Klubs (Promotion League, 1. Liga Classic, Testspiele bei Flashscore):
+// true = spielt am selben Tag, false = spielt an einem anderen Tag in den 3 Tagen davor/danach,
+// 0 = hat in diesen Tagen kein Spiel (z. B. Winterpause), null = unbekannt (U21 nirgends gefunden / zu weit weg)
+const u21Re = (club) => U21[club] && new RegExp(`^(neuchatel )?${U21[club]}( sport)? (ii|u21|u 21)$`);
 function u21Same(club, start) {
-  const key = U21[club];
-  if (!key) return null;
-  const re = new RegExp(`^${key}( sport)? (ii|u21|u-21)$`);
-  let other = false;
+  const re = u21Re(club);
+  if (!re) return null;
+  let other = false, known = false;
   for (const e of store.values()) {
-    if (e.sport !== F || e.lg === 'sui.u19' || Math.abs(e.start - start) > 3.5 * DAY || e.void) continue;
+    if (e.sport !== F || e.lg === 'sui.u19' || e.void) continue;
     if (![e.home?.n, e.away?.n].some((n) => re.test(plainName(n)))) continue;
+    known = true;
+    if (Math.abs(e.start - start) > 3.5 * DAY) continue;
     if (zDay(e.start) === zDay(start)) return true;
     other = true;
   }
-  return other ? false : null;
+  if (other) return false;
+  // Flashscore-Spielpläne reichen 7 Tage voraus: danach kein Spiel = U21 spielt nicht
+  return known && start < Date.now() + 6.5 * DAY ? 0 : null;
 }
-// Logo der ersten Mannschaft (Super/Challenge League) für das U19-Team; einmal gefunden, gemerkt
+// Logo der ersten Mannschaft (sonst der U21) für das U19-Team; einmal gefunden, gemerkt
 const u19Logo = new Map();
 function logoOf(club) {
-  if (u19Logo.has(club)) return u19Logo.get(club);
-  const key = U21[club];
-  if (!key) return '';
-  const re = new RegExp(`^(neuchatel )?${key}( sport)?$`);
+  if (u19Logo.get(club)) return u19Logo.get(club);
+  if (!U21[club]) return '';
+  const first = new RegExp(`^(neuchatel )?${U21[club]}( sport)?$`), second = u21Re(club);
+  let alt = '';
   for (const e of store.values()) {
-    if (e.sport !== F || !/^sui\.[12]$/.test(e.lg)) continue;
-    for (const t of [e.home, e.away]) if (t?.l && re.test(plainName(t.n))) { u19Logo.set(club, t.l); return t.l; }
+    if (e.sport !== F || !/^sui\./.test(e.lg) || e.lg === 'sui.u19') continue;
+    for (const t of [e.home, e.away]) {
+      if (!t?.l) continue;
+      const n = plainName(t.n);
+      if (first.test(n)) { u19Logo.set(club, t.l); return t.l; }
+      if (!alt && second.test(n)) alt = t.l;
+    }
   }
-  return '';
+  if (alt) u19Logo.set(club, alt);
+  return alt;
+}
+// Tabelle und Form: Punkte pro Spiel gesamt, zu Hause bzw. auswärts, letzte 5 Spiele
+function u19Table(games) {
+  const T = new Map();
+  for (const g of games) {
+    for (const [t, gf, ga, home] of [[g.h, g.hs, g.as, true], [g.a, g.as, g.hs, false]]) {
+      if (!T.has(t)) T.set(t, { p: 0, n: 0, hp: 0, hn: 0, ap: 0, an: 0, w: 0, d: 0, l: 0, gf: 0, ga: 0, last: [], res: [] });
+      const x = T.get(t), pts = gf > ga ? 3 : gf === ga ? 1 : 0;
+      x.p += pts; x.n++; x.last.push(pts); x.gf += gf; x.ga += ga; x[pts === 3 ? 'w' : pts ? 'd' : 'l']++;
+      x.res.push({ t: g.ts, vs: home ? g.a : g.h, home, gf, ga });
+      if (home) { x.hp += pts; x.hn++; } else { x.ap += pts; x.an++; }
+    }
+  }
+  return T;
+}
+// Stärke aus der Tabelle: 45 % Saison, 20 % Heim-/Auswärtsbilanz, 35 % letzte 5 Spiele (Form)
+function u19Str(T, team, home) {
+  const x = T.get(team);
+  if (!x || !x.n) return 1.4;
+  const venue = home ? (x.hn ? x.hp / x.hn : x.p / x.n) : (x.an ? x.ap / x.an : x.p / x.n);
+  const l5 = x.last.slice(-5), form = l5.reduce((s, v) => s + v, 0) / l5.length;
+  return 0.45 * x.p / x.n + 0.2 * venue + 0.35 * form;
+}
+// Torschütze (jederzeit) aus der Torschützenliste: Tore pro Einsatz (gedämpft), skaliert auf die erwarteten
+// Tore des Teams in diesem Spiel, mal Wahrscheinlichkeit, dass er spielt. U21-Regel pro Spieler: wer nur gut
+// die Hälfte der Spiele macht, aber oft trifft (z. B. Gambardella bei YB), spielt meist dann, wenn die U21 frei hat.
+// Aus den Spielberichten zusätzlich: Form (Tore in den letzten 5 Teamspielen) und Joker (oft eingewechselt =
+// weniger Minuten). Erster Torschütze: Anteil des Spielers an den erwarteten Toren beider Teams mal P(ein Tor fällt).
+function u19Scorers(players, T, g, lam, hS, aS, recent) {
+  const out = {}, first = {}, all = [];
+  for (const [team, mu, u21] of [[g.h, lam.lh, hS], [g.a, lam.la, aS]]) {
+    const x = T.get(team), list = players[team];
+    if (!x?.n || !list?.length) continue;
+    const gfPg = Math.max(0.8, list.reduce((s, p) => s + p[2], 0) / x.n);
+    const rec = recent?.get(team) || new Map();
+    const rows = [];
+    for (const [name, apps, goals, ex = {}] of list) {
+      if (!(goals >= 1)) continue;
+      let rate = (goals + 0.25) / (apps + 1.5);
+      const share = apps / x.n;
+      // Form: Tore in den letzten 5 Spielen gegenüber dem eigenen Schnitt (gedämpft)
+      const r5 = [...rec].find(([k]) => nameKey(k) === nameKey(name))?.[1] || 0;
+      const exp5 = 5 * rate * Math.min(1, share);
+      rate *= Math.min(1.35, Math.max(0.75, Math.sqrt((r5 + 0.5) / (exp5 + 0.5))));
+      // Joker: wer meist eingewechselt wird, spielt etwa ein Drittel des Spiels
+      const jok = apps ? Math.min(1, (ex.in || 0) / apps) : 0;
+      const mins = 1 - 0.6 * jok;
+      let play = Math.min(0.92, Math.max(0.15, share + 0.05));
+      const part = share < 0.65 && apps >= 3 && rate >= 0.35; // Teilzeit-Torjäger, pendelt mit der U21
+      if (part && u21 === true) play *= 0.35;
+      else if (part && (u21 === false || u21 === 0)) play = Math.max(play, 0.75);
+      const m = rate * mu / gfPg * mins;
+      const p = play * (1 - Math.exp(-m));
+      if (p >= 0.04) rows.push([name, p, play * m]);
+    }
+    rows.sort((a, b) => b[1] - a[1]);
+    for (const [name, p, m] of rows.slice(0, 10)) { out[name] = { o: Math.min(41, Math.max(1.3, Math.round(100 / (p * 1.15)) / 100)), b: 'Modell' }; all.push([name, m]); }
+  }
+  const tot = lam.lh + lam.la, any = 1 - Math.exp(-tot);
+  for (const [name, m] of all) { const p = (m / tot) * any; if (p >= 0.02) first[name] = { o: Math.min(51, Math.max(2, Math.round(100 / (p * 1.2)) / 100)), b: 'Modell' }; }
+  return Object.keys(out).length ? { gsa: out, gsf: Object.keys(first).length ? first : null } : null;
+}
+// Infos für die Spieler: Tabelle, Form, Heim/Auswärts, Direktduelle, Torschützen, U21-Lage
+let u19Over = null, u19Teams = {};
+function u19Rank(T) {
+  return [...T.entries()].map(([team, x]) => ({ team, n: x.n, w: x.w, d: x.d, l: x.l, gf: x.gf, ga: x.ga, p: x.p }))
+    .sort((a, b) => b.p - a.p || (b.gf - b.ga) - (a.gf - a.ga) || b.gf - a.gf).map((r, i) => ({ ...r, rk: i + 1 }));
+}
+function u19TeamInfo(T, rank, players, team, home) {
+  const x = T.get(team);
+  if (!x) return null;
+  const r = rank.find((y) => y.team === team);
+  const v = x.res.filter((y) => y.home === home);
+  return {
+    sp: u19Teams[team]?.sp, rk: r?.rk, p: x.p, n: x.n, w: x.w, d: x.d, l: x.l, gf: x.gf, ga: x.ga,
+    venue: { n: v.length, p: v.reduce((s, y) => s + (y.gf > y.ga ? 3 : y.gf === y.ga ? 1 : 0), 0), gf: v.reduce((s, y) => s + y.gf, 0), ga: v.reduce((s, y) => s + y.ga, 0) },
+    last: x.res.slice(-5).reverse().map((y) => ({ vs: y.vs, home: y.home, gf: y.gf, ga: y.ga, t: y.t })),
+    top: (players[team] || []).slice().sort((a, b) => b[2] - a[2] || a[1] - b[1]).slice(0, 4).map(([n, apps, goals]) => ({ n, apps, goals })),
+  };
+}
+// Aus den offiziellen Spielberichten (g.r): wann ein Team trifft und kassiert, Pausenstand, erstes Tor,
+// Karten, Joker-Tore. Pro Spieler: Tore in den letzten 5 Teamspielen.
+function u19Stats(played) {
+  const S = new Map(), recent = new Map();
+  const get = (t) => { if (!S.has(t)) S.set(t, { n: 0, gf1: 0, ga1: 0, gf2: 0, ga2: 0, lateF: 0, lateA: 0, first: 0, firstW: 0, firstN: 0, conc1st: 0, conc1stPts: 0, htL: 0, htLP: 0, htT: 0, htTP: 0, htD: 0, htDP: 0, y: 0, red: 0, joker: 0, cs: 0, blank: 0, og: 0, cards: {}, games: [] }); return S.get(t); };
+  for (const g of played) {
+    if (!g.r) continue;
+    for (const side of ['h', 'a']) {
+      const team = side === 'h' ? g.h : g.a, opp = side === 'h' ? 'a' : 'h', x = get(team);
+      const gf = side === 'h' ? g.hs : g.as, ga = side === 'h' ? g.as : g.hs, pts = gf > ga ? 3 : gf === ga ? 1 : 0;
+      x.n++; x.games.push(g);
+      for (const [min, s, , og] of g.r.g) {
+        const mine = s === side;
+        if (min <= 45) x[mine ? 'gf1' : 'ga1']++; else x[mine ? 'gf2' : 'ga2']++;
+        if (min >= 76) x[mine ? 'lateF' : 'lateA']++;
+        if (og && !mine) x.og++;
+      }
+      const f = g.r.g[0];
+      if (f) { x.firstN++; if (f[1] === side) { x.first++; if (pts === 3) x.firstW++; } else { x.conc1st++; x.conc1stPts += pts; } }
+      if (g.ht) {
+        const [hh, ha] = side === 'h' ? g.ht : [g.ht[1], g.ht[0]];
+        if (hh > ha) { x.htL++; x.htLP += pts; } else if (hh < ha) { x.htT++; x.htTP += pts; } else { x.htD++; x.htDP += pts; }
+      }
+      for (const [, s, n, t] of g.r.c) if (s === side) { if (t === 'Y') x.y++; else x.red++; x.cards[n] = (x.cards[n] || 0) + 1; }
+      // Joker-Tor: Torschütze wurde in diesem Spiel vorher eingewechselt
+      for (const [min, s, n, og] of g.r.g) if (s === side && !og && g.r.s.some(([sm, ss, , inn]) => ss === side && inn === n && sm <= min)) x.joker++;
+      if (!ga) x.cs++;
+      if (!gf) x.blank++;
+    }
+  }
+  for (const [team, x] of S) {
+    const last = x.games.slice(-5), m = new Map();
+    for (const g of last) for (const [, s, n, og] of g.r.g) if (!og && (s === 'h' ? g.h : g.a) === team) m.set(n, (m.get(n) || 0) + 1);
+    recent.set(team, m);
+    delete x.games;
+  }
+  return { S, recent };
+}
+const pct = (p) => Math.round(p * 100) + ' %';
+const nameKey = (s) => plainName(s).split(' ').sort().join(' ');
+// Langer Bericht zum Spiel, «was der Roboter sagt»: beschreibt beide Teams aus Tabelle, Form und
+// Spielberichten und das Modell, gibt aber bewusst keinen Tipp ab.
+function u19Report(g, T, rank, st, players, lam, w, hS, aS, h2h) {
+  const P = [];
+  const team = (name, home, u21) => {
+    const x = T.get(name), r = rank.find((y) => y.team === name), s = st.S.get(name);
+    if (!x || !s) return;
+    const ppg = x.p / x.n, l5 = x.res.slice(-5), l5p = l5.reduce((a, y) => a + (y.gf > y.ga ? 3 : y.gf === y.ga ? 1 : 0), 0);
+    const v = x.res.filter((y) => y.home === home), vp = v.reduce((a, y) => a + (y.gf > y.ga ? 3 : y.gf === y.ga ? 1 : 0), 0);
+    const t = [];
+    const pl = (n, one, many) => `${n} ${n === 1 ? one : many}`;
+    t.push(`${name} steht auf Platz ${r.rk} mit ${x.p} Punkten aus ${x.n} Spielen (${pl(x.w, 'Sieg', 'Siege')}, ${x.d} Unentschieden, ${pl(x.l, 'Niederlage', 'Niederlagen')}, Tore ${x.gf}:${x.ga}). Das sind ${ppg.toFixed(2)} Punkte pro Spiel.`);
+    const fTxt = l5p >= 12 ? 'ist in starker Form' : l5p >= 8 ? 'ist ordentlich in Form' : l5p >= 5 ? 'schwankt zurzeit' : 'steckt in einem Tief';
+    t.push(`Aus den letzten fünf Spielen holte ${name} ${l5p} Punkte (${l5.map((y) => `${y.home ? '' : '@'}${y.vs} ${y.gf}:${y.ga}`).join(', ')}) und ${fTxt}.`);
+    if (v.length) t.push(`${home ? 'Zu Hause' : 'Auswärts'}: ${(vp / v.length).toFixed(2)} Punkte pro Spiel, Tore ${v.reduce((a, y) => a + y.gf, 0)}:${v.reduce((a, y) => a + y.ga, 0)} in ${v.length} Spielen.`);
+    const gf = s.gf1 + s.gf2, ga = s.ga1 + s.ga2;
+    if (gf) t.push(`Von den ${gf} Toren fielen ${s.gf1} vor und ${s.gf2} nach der Pause${s.gf2 > s.gf1 * 1.4 ? ', das Team legt in der zweiten Halbzeit zu' : s.gf1 > s.gf2 * 1.3 ? ', das Team ist vor allem früh gefährlich' : ''}. In den letzten 15 Minuten traf es ${s.lateF}-mal und kassierte ${s.lateA} Gegentore.`);
+    if (ga) t.push(`Gegentore: ${s.ga1} in der ersten, ${s.ga2} in der zweiten Halbzeit. ${s.cs ? `${s.cs}-mal blieb es ohne Gegentor` : 'Ohne Gegentor blieb es noch nie'}${s.blank ? `, ${s.blank}-mal traf es selbst nicht` : ', getroffen hat es in jedem Spiel'}.`);
+    if (s.firstN) t.push(`Das erste Tor schoss ${name} in ${s.first} von ${s.firstN} Spielen und gewann davon ${s.firstW}. Lag es zuerst zurück (${s.conc1st}-mal), holte es danach im Schnitt ${s.conc1st ? (s.conc1stPts / s.conc1st).toFixed(1) : '–'} Punkte.`);
+    if (s.htL + s.htT + s.htD) t.push(`Zur Pause führte es ${s.htL}-mal (danach ${s.htL ? (s.htLP / s.htL).toFixed(1) : '–'} Punkte pro Spiel), lag ${s.htT}-mal zurück (${s.htT ? (s.htTP / s.htT).toFixed(1) : '–'}) und stand ${s.htD}-mal unentschieden (${s.htD ? (s.htDP / s.htD).toFixed(1) : '–'}).`);
+    const list = (players[name] || []).filter((p) => p[2] > 0);
+    const rec = st.recent.get(name) || new Map();
+    if (list.length) {
+      const top = list.slice(0, 4).map(([n, apps, goals]) => { const r5 = [...rec].find(([k]) => nameKey(k) === nameKey(n))?.[1] || 0; return `${n} (${pl(goals, 'Tor', 'Tore')} in ${apps} Einsätzen${r5 ? `, ${r5} in den letzten 5 Spielen` : ''})`; });
+      const share = list[0][2] / Math.max(1, gf);
+      t.push(`Torschützen: ${top.join(', ')}. ${share >= 0.25 ? `Ein grosser Teil hängt an ${list[0][0]} (${pct(share)} der Tore).` : `Die Tore verteilen sich auf ${list.length} Spieler.`}${s.joker ? ` ${s.joker === 1 ? 'Ein Tor kam' : `${s.joker} Tore kamen`} von Eingewechselten.` : ''}`);
+    }
+    const hot = [...rec].filter(([n]) => !list.slice(0, 4).some((p) => nameKey(p[0]) === nameKey(n))).sort((a, b) => b[1] - a[1])[0];
+    if (hot && hot[1] >= 2) t.push(`Zuletzt auffällig: ${hot[0]} mit ${hot[1]} Toren in den letzten fünf Spielen.`);
+    const bad = Object.entries(s.cards).sort((a, b) => b[1] - a[1])[0];
+    t.push(`Karten: ${(s.y / s.n).toFixed(1)} Gelbe pro Spiel${s.red ? `, ${s.red}-mal Rot oder Gelb-Rot` : ', noch kein Platzverweis'}${bad && bad[1] >= 3 ? `; am häufigsten verwarnt wurde ${bad[0]} (${bad[1]})` : ''}.`);
+    t.push(u21 === true ? `Die U21 von ${name} spielt am selben Tag. Dann fehlen der U19 oft Spieler, die oben aushelfen.` : u21 === false ? `Die U21 spielt an einem anderen Tag, die U19 dürfte also ihre besten Spieler zur Verfügung haben.` : u21 === 0 ? `Die U21 hat in diesen Tagen kein Spiel, die U19 kann voll besetzt antreten.` : `Ob die U21 am selben Tag spielt, ist noch nicht bekannt.`);
+    P.push({ h: name, t: t.join(' ') });
+  };
+  team(g.h, true, hS);
+  team(g.a, false, aS);
+  // Modell: Wahrscheinlichkeiten aus den Quoten ohne Marge, Tore aus dem Gitter
+  if (w && lam) {
+    const q = { 1: 1 / w[1], X: 1 / w.X, 2: 1 / w[2] }, s = q[1] + q.X + q[2];
+    const po = (k, l) => Math.exp(-l) * l ** k / [1, 1, 2, 6, 24, 120, 720, 5040, 40320][k];
+    let o25 = 0, bt = 0;
+    for (let i = 0; i <= 8; i++) for (let j = 0; j <= 8; j++) { const p = po(i, lam.lh) * po(j, lam.la); if (i + j > 2.5) o25 += p; if (i && j) bt += p; }
+    const m = [`Das Modell erwartet ${lam.lh.toFixed(1)} Tore für ${g.h} und ${lam.la.toFixed(1)} für ${g.a}.`,
+      `Daraus ergeben sich etwa ${pct(q[1] / s)} für einen Heimsieg, ${pct(q.X / s)} für ein Unentschieden und ${pct(q[2] / s)} für einen Auswärtssieg.`,
+      `Mehr als 2.5 Tore: rund ${pct(o25)}. Beide Teams treffen: rund ${pct(bt)}.`];
+    if (h2h.length) m.push(`Direktduell diese Saison: ${h2h.map((x) => `${x.h}–${x.a} ${x.hs}:${x.as}`).join(', ')}.`);
+    m.push('Das ist eine Beschreibung aus den Zahlen, kein Tipp. U19-Spiele sind schwer vorherzusagen, weil Kader oft wechseln.');
+    P.push({ h: 'Was der Roboter sagt', t: m.join(' ') });
+  }
+  return P;
 }
 let u19At = 0;
 function u19Sweep() {
@@ -544,40 +728,67 @@ function u19Sweep() {
   try { doc = JSON.parse(fs.readFileSync(U19, 'utf8')); } catch { return; }
   const now = Date.now();
   const games = (doc.games || []).map((g) => ({ ...g, ts: Date.parse(g.t) })).filter((g) => Number.isFinite(g.ts));
-  const R = ratings(games.filter((g) => g.ts < now).map((g) => ({ home: g.h, away: g.a, hs: g.hs, as: g.as, ts: g.ts })), now, { half: 35 * DAY, prior: 3 });
+  const played = games.filter((g) => g.ts < now && Number.isFinite(g.hs) && Number.isFinite(g.as));
+  const R = ratings(played.map((g) => ({ home: g.h, away: g.a, hs: g.hs, as: g.as, ts: g.ts })), now, { half: 60 * DAY, prior: 3 });
+  u19Teams = doc.teams || {};
+  const T = u19Table(played), rank = u19Rank(T).map((r) => ({ ...r, sp: u19Teams[r.team]?.sp })), players = doc.players || {};
+  const st = u19Stats(played);
+  // Anteil der Tore in der ersten Halbzeit (für die Halbzeit-Märkte)
+  const allG = played.flatMap((g) => g.r?.g || []), hf = allG.length > 50 ? allG.filter((x) => x[0] <= 45).length / allG.length : 0.45;
+  const scorers = Object.entries(players).flatMap(([team, l]) => l.map(([n, apps, goals]) => ({ n, team, apps, goals }))).sort((a, b) => b.goals - a.goals || a.apps - b.apps).slice(0, 30);
+  u19Over = { updated: doc.updated, playersAt: doc.playersAt, playersSrc: doc.playersSrc, table: rank, scorers, goals: played.reduce((s, g) => s + g.hs + g.as, 0), games: played.length, home: played.filter((g) => g.hs > g.as).length, draw: played.filter((g) => g.hs === g.as).length };
   let n = 0;
   for (const g of games) {
     const id = 'u19-' + g.t.slice(0, 10) + '-' + plainName(g.h).replace(/ /g, '') + '-' + plainName(g.a).replace(/ /g, '');
     const old = store.get(id);
     if (!old && g.ts < now - 2 * DAY) continue; // alte Spiele nur für die Ratings
     const ev = {
-      id, sport: F, lg: 'sui.u19', start: g.ts, day: '', u19: true, nohalf: true,
+      id, sport: F, lg: 'sui.u19', start: g.ts, day: '', u19: true, nohalf: false,
       home: { n: g.h + ' U19', s: g.h + ' U19', l: logoOf(g.h) }, away: { n: g.a + ' U19', s: g.a + ' U19', l: logoOf(g.a) },
       state: 'pre', done: false, void: false, et: false, txt: '', sh: null, sa: null, src: {},
     };
-    if (Number.isFinite(g.hs) && Number.isFinite(g.as)) Object.assign(ev, { state: 'post', done: true, txt: 'Beendet', sh: g.hs, sa: g.as });
-    else if (g.off || g.ts < now - 7 * DAY) Object.assign(ev, { state: 'post', void: true, txt: 'Verschoben' });
+    if (Number.isFinite(g.hs) && Number.isFinite(g.as)) {
+      Object.assign(ev, { state: 'post', done: true, txt: 'Beendet', sh: g.hs, sa: g.as });
+      // Torschützen trage ich nach der Runde ein (aus dem offiziellen Spielbericht, mit Minute)
+      if (g.r) { ev.goals = g.r.g.map(([m, , n, og]) => ({ n, m, ...(og ? { og: true } : {}) })); ev.np = g.np || []; }
+      else if (Array.isArray(g.sc)) { ev.goals = g.sc.map((n) => ({ n, m: 1 })); ev.np = g.np || []; }
+      // Halbzeit-Märkte: ohne Pausenstand Geld zurück
+      if (Array.isArray(g.ht)) ev.h1 = g.ht;
+      else ev.nohalf = true;
+    } else if (g.off || g.ts < now - 7 * DAY) Object.assign(ev, { state: 'post', void: true, txt: 'Verschoben' });
     else if (g.ts < now) Object.assign(ev, now - g.ts < 2 * 36e5 ? { state: 'in', txt: 'läuft' } : { state: 'post', txt: 'Resultat folgt' });
     else if (R) {
-      const lam = fromRatings(R, g.h, g.a, 4.5, 0.85);
+      // Tore (Angriff/Abwehr nach Gegnerstärke) ...
+      const lam = fromRatings(R, g.h, g.a, 4.5, 0.8);
+      // ... plus Tabelle und Form: Tore allein überschätzen Teams mit vielen Toren, aber wenig Punkten
+      const f = ((u19Str(T, g.h, true) + 1) / (u19Str(T, g.a, false) + 1)) ** 1.6;
+      lam.lh = Math.min(4.5, Math.max(0.35, lam.lh * Math.sqrt(Math.min(2.2, Math.max(0.45, f)))));
+      lam.la = Math.min(4.5, Math.max(0.35, lam.la / Math.sqrt(Math.min(2.2, Math.max(0.45, f)))));
       // Poisson ist bei so vielen Toren zu sicher (Saison: 78 % über 2.5, Modell sagte ~88 %): Tore Richtung 3.9 ziehen
-      const tot = lam.lh + lam.la, f = (0.6 * tot + 0.4 * 3.9) / tot;
-      lam.lh *= f; lam.la *= f;
+      const tot = lam.lh + lam.la, fT = (0.6 * tot + 0.4 * 3.9) / tot;
+      lam.lh *= fT; lam.la *= fT;
       const hS = g.u21h ?? u21Same(g.h, g.ts), aS = g.u21a ?? u21Same(g.a, g.ts);
-      const adj = (x) => (x === true ? 0.88 : x === false ? 1.05 : 1);
+      const adj = (x) => (x === true ? 0.88 : x === false || x === 0 ? 1.04 : 1);
       lam.lh *= adj(hS) / Math.sqrt(adj(aS)); lam.la *= adj(aS) / Math.sqrt(adj(hS));
       // Poisson unterschätzt Unentschieden (U19 Elite diese Saison: 21 %), darum X etwas anheben
       const w0 = oneXtwo(lam, 'Modell');
       const w = w0 && (() => { const p = { 1: 1 / w0[1].o, X: 1.18 / w0.X.o, 2: 1 / w0[2].o }, s = p[1] + p.X + p[2]; return Object.fromEntries(Object.entries(p).map(([k, x]) => [k, Math.round(100 / (1.07 * x / s)) / 100])); })();
-      if (w) ev.src = { mod: { w }, lam, u21: [hS, aS] };
+      const gs = w && u19Scorers(players, T, g, lam, hS, aS, st.recent);
+      if (w) ev.src = { mod: { w }, lam, hf, u21: [hS, aS], u19gs: gs?.gsa || null, u19gf: gs?.gsf || null };
       ev.u21 = [hS, aS];
+      // Serien (ab 3 Siegen oder Niederlagen in Folge) aus der ganzen Saison
+      const sk = (team) => { const r = T.get(team)?.res || [], k = (y) => (y.gf > y.ga ? 'w' : y.gf < y.ga ? 'l' : 'd'); const last = r.length && k(r[r.length - 1]); if (!last || last === 'd') return null; let n = 0; for (let i = r.length - 1; i >= 0 && k(r[i]) === last; i--) n++; return n >= 3 ? { k: last, n } : null; };
+      const skx = [sk(g.h), sk(g.a)];
+      if (skx[0] || skx[1]) ev.sk = skx;
+      const h2h = played.filter((x) => (x.h === g.h && x.a === g.a) || (x.h === g.a && x.a === g.h)).map((x) => ({ t: x.ts, h: x.h, a: x.a, hs: x.hs, as: x.as }));
+      ev.info = { v: g.v || '', h: u19TeamInfo(T, rank, players, g.h, true), a: u19TeamInfo(T, rank, players, g.a, false), xg: [Math.round(lam.lh * 10) / 10, Math.round(lam.la * 10) / 10], h2h,
+        rep: u19Report(g, T, rank, st, players, lam, w, hS, aS, h2h) };
     }
     upsert(ev);
     n++;
   }
   if (now - u19At > 36e5) { u19At = now; console.log(`U19 Elite: ${n} Spiele aus u19.json`); }
 }
-
 // Ein Spiel nachladen, das nicht mehr im Speicher ist (alte offene Wette nach einem Neustart).
 const asked = new Map();
 async function recover(id, slug, start) {
@@ -957,9 +1168,43 @@ function loadStore() {
   try { for (const ev of JSON.parse(fs.readFileSync(STORE, 'utf8'))) if (ev?.id) store.set(ev.id, ev); } catch { /* erster Start */ }
 }
 
+// Sieges- und Niederlagenserien (ab 3) aus den beendeten Spielen der letzten 120 Tage im Speicher.
+// Unentschieden beendet beide Serien. Wird höchstens einmal pro Minute neu berechnet.
+let skAt = 0, skMap = new Map();
+function streaks(now) {
+  if (now - skAt < 60e3) return skMap;
+  const seen = new Set(), list = [];
+  for (const e of store.values()) {
+    if (!e.done || e.void || e.u19 || !Number.isFinite(e.sh) || !Number.isFinite(e.sa) || now - e.start > 120 * DAY || !e.home?.n || !e.away?.n) continue;
+    const k = `${e.sport}|${plainName(e.home.n)}|${plainName(e.away.n)}|${Math.round(e.start / 36e5)}`;
+    if (seen.has(k)) continue;
+    seen.add(k); list.push(e);
+  }
+  list.sort((a, b) => a.start - b.start);
+  const seq = new Map();
+  for (const e of list) {
+    const hw = e.sport !== F && String(e.win) === '1' ? true : e.sport !== F && String(e.win) === '2' ? false : e.sh > e.sa ? true : e.sh < e.sa ? false : null;
+    for (const [t, r] of [[e.home.n, hw === null ? 'd' : hw ? 'w' : 'l'], [e.away.n, hw === null ? 'd' : hw ? 'l' : 'w']]) {
+      const key = e.sport + '|' + plainName(t);
+      if (!seq.has(key)) seq.set(key, []);
+      seq.get(key).push(r);
+    }
+  }
+  const out = new Map();
+  for (const [key, s] of seq) {
+    const last = s[s.length - 1];
+    if (last === 'd') continue;
+    let n = 0;
+    for (let i = s.length - 1; i >= 0 && s[i] === last; i--) n++;
+    if (n >= 3) out.set(key, { k: last, n });
+  }
+  skAt = now; skMap = out;
+  return out;
+}
 function payload(need) {
   const now = Date.now();
   const events = [];
+  const SK = streaks(now);
   const known = new Set(LEAGUES.map((l) => l.slug));
   const onlyReal = new Set(LEAGUES.filter((l) => l.onlyReal).map((l) => l.slug));
   for (const ev of store.values()) {
@@ -982,6 +1227,10 @@ function payload(need) {
     }
     // Modellquoten nur, wenn 24 Stunden vor dem Spiel immer noch kein Buchmacher Quoten hat.
     if (ev.book === 'Modell' && ev.lg !== 'sui.u19' && ev.start - now > DAY) { pub.m = {}; pub.cmp = {}; pub.wait = true; }
+    if (!ev.u19 && ev.state === 'pre' && ev.home?.n && ev.away?.n) {
+      const sk = [SK.get(ev.sport + '|' + plainName(ev.home.n)) || null, SK.get(ev.sport + '|' + plainName(ev.away.n)) || null];
+      if (sk[0] || sk[1]) pub.sk = sk;
+    }
     events.push(pub);
   }
   return { t: now, upd: lastSweep, leagues: LEAGUES.filter((l) => !l.dead || fsCovered.has(l.slug)).map(({ slug, sport, name, land }) => ({ slug, sport, name, land })), events };
@@ -1168,6 +1417,7 @@ async function accApi(req, res, u) {
 http.createServer((req, res) => {
   const u = new URL(req.url, 'http://x');
   if (u.pathname.startsWith('/api/acc/')) return void accApi(req, res, u);
+  if (u.pathname === '/api/u19') { res.writeHead(200, { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' }); return void res.end(JSON.stringify(u19Over || {})); }
   if (u.pathname === '/api/events') {
     // need = "id~liga~startzeit,…": offene Wetten des Besuchers, damit auch ältere Spiele mitkommen.
     const hints = (u.searchParams.get('need') || '').split(',').filter(Boolean).slice(0, 300).map((x) => x.split('~'));

@@ -121,7 +121,7 @@ export function oneXtwo({ lh, la }, book) {
 }
 
 // Alle abgeleiteten Märkte. half = false lässt die Halbzeitmärkte weg (Quelle ohne Halbzeitstand).
-export function derive({ lh, la }, book, { half = true, skipOu = null } = {}) {
+export function derive({ lh, la }, book, { half = true, skipOu = null, hf = 0.45 } = {}) {
   const m = {};
   const g = grid(lh, la);
   const two = (key, line, pO) => { const x = market({ O: pO, U: 1 - pO }, book); if (x) m[key] = { line, ...x }; };
@@ -136,7 +136,7 @@ export function derive({ lh, la }, book, { half = true, skipOu = null } = {}) {
   for (let i = 0; i <= 4; i++) for (let j = 0; j <= 4; j++) if (g[i][j] >= 0.012) cs[`${i}:${j}`] = { o: price(g[i][j], 1.15), b: book };
   if (Object.keys(cs).length >= 4) m.cs = cs;
   if (half) {
-    const h = grid(lh * 0.45, la * 0.45);
+    const h = grid(lh * (hf || 0.45), la * (hf || 0.45));
     const hr = market({ 1: sum(h, (i, j) => i > j), X: sum(h, (i, j) => i === j), 2: sum(h, (i, j) => i < j) }, book);
     if (hr) m.h1 = hr;
     for (const L of [0.5, 1.5, 2.5]) two('h1ou' + L, L, sum(h, (i, j) => i + j > L));

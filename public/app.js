@@ -374,7 +374,7 @@ function evRow(e) {
   const book = e.wait ? 'Quoten folgen, spätestens 24 Stunden vor dem Spiel' : e.book === 'Modell' ? 'Modellquote' : e.sport === 'eishockey' && e.m?.['1x2']?.['1']?.b === 'berechnet' ? `${e.book}, Unentschieden berechnet` : e.book;
   let h = `<div class="ev${e.wait ? ' wait' : ''}">
     <div class="when">${soon ? `<b class="cd" data-cd="${e.start}">${countdown(e.start)}</b>bis Anpfiff` : `<b>${timeLabel(e.start)}</b>${dayLabel(e.start)}`}</div>
-    <div class="teams"><div>${img(e.home)}<span>${esc(e.home.n)}</span>${star(e.home)}</div><div>${img(e.away)}<span>${esc(e.away.n)}</span>${star(e.away)}</div><div class="sub">${esc([V.q ? lgBy.get(e.lg)?.name : '', e.tour, book, u21Txt(e)].filter(Boolean).join(' · '))}</div></div>
+    <div class="teams"><div>${img(e.home)}<span>${esc(e.home.n)}</span>${skIcon(e.sk?.[0])}${star(e.home)}</div><div>${img(e.away)}<span>${esc(e.away.n)}</span>${skIcon(e.sk?.[1])}${star(e.away)}</div><div class="sub">${esc([V.q ? lgBy.get(e.lg)?.name : '', e.tour, book, u21Txt(e)].filter(Boolean).join(' · '))}</div>${betters(e)}</div>
     <div class="odds">${main === '1x2' ? oddBtn(e, main, '1', '1') + oddBtn(e, main, 'X', 'X') + oddBtn(e, main, '2', '2') : oddBtn(e, main, '1', '1') + oddBtn(e, main, '2', '2')}</div>
     ${extras ? `<button class="more" data-act="more" data-id="${esc(e.id)}">${V.open.has(e.id) ? '–' : '+' + extras}</button>` : '<span></span>'}
   </div>`;
@@ -382,8 +382,58 @@ function evRow(e) {
   return h;
 }
 
+// U19: Fakten zum Spiel (Tabelle, Form, Heim/Auswärts, Direktduelle, Torschützen, U21)
+// Wer schon auf dieses Spiel getippt hat: kleine Kreise mit Initialen (eigene Farbe pro Name),
+// beim Darüberfahren Name und Tipp. Nur auf breiten Bildschirmen, wo Platz ist.
+const nameColor = (n) => { let h = 0; for (const c of n) h = (h * 31 + c.charCodeAt(0)) % 360; return `hsl(${h} 55% 42%)`; };
+const initials = (n) => n.trim().split(/\s+/).map((w) => w[0]).join('').slice(0, 2).toUpperCase();
+function betters(e) {
+  const list = P.onEv?.[e.id];
+  if (!list?.length) return '';
+  const me = S.name;
+  const tip = (x) => `${x.n}: ${x.t.map((t) => `${t.p} (${q(t.o)}${t.k ? ', ' + t.k : ''})`).join(', ')}`;
+  const shown = list.slice(0, 4);
+  return `<div class="bettors" title="${esc(list.map(tip).join('\n'))}">${shown.map((x) => `<i class="bt${x.n === me ? ' me' : ''}" style="background:${nameColor(x.n)}">${esc(initials(x.n))}</i>`).join('')}${list.length > 4 ? `<i class="bt more">+${list.length - 4}</i>` : ''}</div>`;
+}
+// Serie neben dem Team: Flamme ab 3 Siegen, Pfeil nach unten ab 3 Niederlagen in Folge.
+// Ab 10 eine grosse, ab 20 eine riesige, leuchtende Variante.
+const skIcon = (s) => {
+  if (!s) return '';
+  const lv = s.n >= 20 ? 'mega' : s.n >= 10 ? 'krass' : '';
+  return s.k === 'w'
+    ? `<i class="sk w ${lv}" title="Siegesserie von ${s.n} Spielen">${lv === 'mega' ? '🔥🔥🔥' : lv ? '🔥🔥' : '🔥'}</i>`
+    : `<i class="sk l ${lv}" title="Niederlagenserie von ${s.n} Spielen">${lv === 'mega' ? '▼▼▼' : lv ? '▼▼' : '▼'}</i>`;
+};
+function u19InfoHtml(e) {
+  const I = e.info;
+  if (!I?.h || !I?.a) return '';
+  const nm = (t) => t.replace(/ U19$/, '');
+  const H = nm(e.home.n), A = nm(e.away.n);
+  const ppg = (p, n) => (n ? (p / n).toFixed(2) : '–');
+  const form = (x) => x.last.map((y) => { const r = y.gf > y.ga ? 'w' : y.gf === y.ga ? 'd' : 'l'; return `<i class="fm ${r}" title="${esc(`${y.home ? 'vs' : '@'} ${y.vs} ${y.gf}:${y.ga}`)}">${r === 'w' ? 'S' : r === 'd' ? 'U' : 'N'}</i>`; }).join('');
+  const row = (label, a, b) => `<tr><td>${a}</td><th>${label}</th><td>${b}</td></tr>`;
+  const u = e.u21 || [], u21 = (x) => (x === true ? 'spielt am selben Tag ↓' : x === false ? 'spielt an einem anderen Tag ↑' : x === 0 ? 'kein Spiel (frei) ↑' : 'unbekannt');
+  const top = (x) => x.top.map((p) => `${esc(p.n)} <b>${p.goals}</b><small>/${p.apps}</small>`).join('<br>') || '–';
+  let h = `<div class="mk u19info"><h5>Infos zum Spiel <i>U19 Elite</i></h5><table class="u19t"><thead><tr><th>${esc(H)}</th><th></th><th>${esc(A)}</th></tr></thead><tbody>
+    ${row('Tabellenplatz', `${I.h.rk}.`, `${I.a.rk}.`)}
+    ${row('Punkte (Spiele)', `${I.h.p} (${I.h.n})`, `${I.a.p} (${I.a.n})`)}
+    ${row('S-U-N', `${I.h.w}-${I.h.d}-${I.h.l}`, `${I.a.w}-${I.a.d}-${I.a.l}`)}
+    ${row('Tore', `${I.h.gf}:${I.h.ga}`, `${I.a.gf}:${I.a.ga}`)}
+    ${row('Punkte/Spiel', ppg(I.h.p, I.h.n), ppg(I.a.p, I.a.n))}
+    ${row('Heim / Auswärts', `${ppg(I.h.venue.p, I.h.venue.n)} P/Sp · ${I.h.venue.gf}:${I.h.venue.ga}`, `${ppg(I.a.venue.p, I.a.venue.n)} P/Sp · ${I.a.venue.gf}:${I.a.venue.ga}`)}
+    ${row('Form (neuestes links)', form(I.h), form(I.a))}
+    ${row('U21', u21(u[0]), u21(u[1]))}
+    ${I.h.sp != null ? row('Strafpunkte (Fairplay)', `${I.h.sp} · ${(I.h.sp / I.h.n).toFixed(1)}/Sp`, `${I.a.sp} · ${(I.a.sp / I.a.n).toFixed(1)}/Sp`) : ''}
+    ${row('Erwartete Tore', I.xg[0], I.xg[1])}
+    ${row('Beste Torschützen<br><small>Tore/Einsätze</small>', top(I.h), top(I.a))}
+  </tbody></table>`;
+  if (I.v) h += `<p class="hint">Spielort: ${esc(I.v)}</p>`;
+  if (I.h2h?.length) h += `<p class="hint">Direktduell diese Saison: ${I.h2h.map((x) => `${esc(x.h)}–${esc(x.a)} ${x.hs}:${x.as}`).join(' · ')}</p>`;
+  if (I.rep?.length) h += `<details class="u19rep"><summary>Spielbericht vorab: was der Roboter sagt</summary>${I.rep.map((p) => `<h6>${esc(p.h)}</h6><p>${esc(p.t)}</p>`).join('')}<p class="hint">Aus den offiziellen Spielberichten aller U19-Elite-Spiele dieser Saison. Kein Tipp.</p></details>`;
+  return h + '</div>';
+}
 function extraHtml(e) {
-  let h = '<div class="extra">';
+  let h = '<div class="extra">' + (e.info ? u19InfoHtml(e) : '');
   const M = e.m || {};
   const src = (b) => (e.book === 'Modell' || b === 'Modell' ? 'Modellquote' : b === 'berechnet' ? `berechnet aus der ${esc(e.book)}-Linie` : esc(b));
   const head = (title, b) => `<h5>${title} <i>${src(b)}</i></h5>`;
@@ -488,7 +538,27 @@ function renderSide() {
   $('#side').innerHTML = h;
 }
 
+// U19-Übersicht: Tabelle und Torschützenliste, einmal pro Minute geladen
+const U19V = { d: null, at: 0, tab: 'table' };
+async function loadU19() {
+  if (Date.now() - U19V.at < 60e3) return;
+  U19V.at = Date.now();
+  try { U19V.d = await (await fetch('/api/u19')).json(); } catch { /* später */ }
+  if (V.tab === 'wetten' && V.sport === 'u19') renderList();
+}
+function u19Overview() {
+  loadU19();
+  const d = U19V.d;
+  if (!d?.table?.length) return '';
+  const nm = (t) => esc(t);
+  const tbl = `<table class="u19tab"><thead><tr><th>#</th><th>Team</th><th>Sp</th><th>S</th><th>U</th><th>N</th><th>Tore</th><th>+/-</th><th title="Strafpunkte (Fairplay)">SP</th><th>Pkt</th></tr></thead><tbody>${d.table.map((r) => `<tr><td>${r.rk}</td><td>${nm(r.team)}</td><td>${r.n}</td><td>${r.w}</td><td>${r.d}</td><td>${r.l}</td><td>${r.gf}:${r.ga}</td><td>${r.gf - r.ga > 0 ? '+' : ''}${r.gf - r.ga}</td><td>${r.sp ?? ''}</td><td><b>${r.p}</b></td></tr>`).join('')}</tbody></table>`;
+  const sc = `<table class="u19tab"><thead><tr><th>#</th><th>Spieler</th><th>Team</th><th>Einsätze</th><th>Tore</th></tr></thead><tbody>${d.scorers.map((p, i) => `<tr><td>${i + 1}</td><td>${esc(p.n)}</td><td>${nm(p.team)}</td><td>${p.apps}</td><td><b>${p.goals}</b></td></tr>`).join('')}</tbody></table>`;
+  const facts = `<p class="hint">${d.games} Spiele · ${(d.goals / d.games).toFixed(2)} Tore pro Spiel · Heimsiege ${Math.round(d.home / d.games * 100)} % · Unentschieden ${Math.round(d.draw / d.games * 100)} % · Resultate Stand ${esc(d.updated || '')}, Torschützen Stand ${esc(d.playersAt || '')} (${esc(d.playersSrc || 'transfermarkt.ch')}). SP = Strafpunkte (Fairplay) laut SFV.</p>`;
+  return `<details class="u19over"${U19V.open ? ' open' : ''}><summary>U19 Elite: Tabelle, Torschützen und Fakten</summary><div class="u19cols"><div><h5>Tabelle</h5>${tbl}</div><div><h5>Torschützen</h5>${sc}</div></div>${facts}</details>`;
+}
+document.addEventListener('toggle', (e) => { if (e.target.classList?.contains('u19over')) U19V.open = e.target.open; }, true);
 function renderList() {
+  loadPlayers(); // höchstens jede Minute: wer auf welche Spiele getippt hat
   const searching = !!V.q.trim();
   let evs = searching ? searchHits() : visible();
   if (!searching && V.lg === 'fav') evs = evs.filter(isFav);
@@ -510,7 +580,8 @@ function renderList() {
     n += list.length;
     h += `<div class="lgHead"><h3><span class="lstar ${isFavL(slug) ? 'on' : ''}" data-act="favL" data-l="${esc(slug)}">${isFavL(slug) ? '★' : '☆'}</span>${esc(l?.name || slug)}</h3><span>${esc(l?.land || '')}</span></div><div class="list">${list.map(evRow).join('')}</div>`;
   }
-  if (V.sport === 'u19' && !searching) h += '<p class="note">U19 Elite: kein Wettanbieter hat Quoten, darum immer Modellquoten aus allen Resultaten der Saison (Gegnerstärke, letzte Spiele zählen mehr). Spielt die U21 des Klubs am selben Tag (↓), fehlen der U19 meist Spieler, die hochgezogen werden: das Modell macht sie schwächer. Spielt die U21 an einem anderen Tag (↑), ist die U19 komplett und etwas stärker. Abgerechnet nach 90 Minuten; wird ein Spiel verschoben, gibt es das Geld zurück.</p>';
+  if (V.sport === 'u19' && !searching) h += u19Overview();
+  if (V.sport === 'u19' && !searching) h += '<p class="note">U19 Elite: kein Wettanbieter hat Quoten, darum immer Modellquoten aus allen Resultaten der Saison (Gegnerstärke, letzte Spiele zählen mehr). Spielt die U21 des Klubs am selben Tag (↓), fehlen der U19 meist Spieler, die hochgezogen werden: das Modell macht sie schwächer. Spielt die U21 an einem anderen Tag (↑), ist die U19 komplett und etwas stärker. Torschützen und erster Torschütze: aus den offiziellen Spielberichten aller Spiele (Tore pro Einsatz, Tore in den letzten 5 Spielen, wie oft er nur eingewechselt wird). Wer nur gut die Hälfte der Spiele macht, aber oft trifft, pendelt meist mit der U21 und spielt eher, wenn die U21 frei hat. Torschützen und Halbzeit-Tipps werden ein paar Tage nach dem Spiel abgerechnet, sobald der Spielbericht da ist; hat der Spieler nicht gespielt, gibt es das Geld zurück. Abgerechnet nach 90 Minuten; wird ein Spiel verschoben, gibt es das Geld zurück.</p>';
   h += '<p class="note">Quoten von Flashscore. Pro Spiel stammen alle Quoten von einem Anbieter: bet365, sonst Interwetten, sonst der nächste. Hat er einen Markt nicht, springt der nächste ein. Weitere Tormärkte sind aus seiner Linie berechnet und so beschriftet. Eishockey: 1X2, Tore und Handicap gelten nach 60 Minuten. «Modellquote» gibt es nur, wenn 24 Stunden vor dem Spiel kein Anbieter Quoten hat; sie ist aus allen Resultaten der Saison berechnet (Gegnerstärke, letzte Spiele zählen mehr). Wetten sind bis zum Anpfiff möglich. Spielgeld, kein echter Einsatz.</p>';
   $('#main').innerHTML = h;
 }
@@ -556,8 +627,9 @@ document.addEventListener('toggle', (e) => { if (e.target.classList?.contains('a
 async function loadPlayers(force) {
   if (!S.tok || (!force && P.list && Date.now() - P.at < 60e3)) return;
   P.at = Date.now();
-  try { const r = await api('players'); P.list = r.list; P.next = r.upcoming || []; P.last = r.recent || []; P.trends = r.trends; P.weeks = r.weeks; P.admin = !!r.admin; P.err = ''; } catch (e) { P.err = e.message; }
-  if (V.tab === 'spieler') renderPlayers(); else if (V.tab === 'trends') renderTrends(); else if (V.tab === 'wochen') renderWeeks();
+  const before = JSON.stringify(P.onEv || {});
+  try { const r = await api('players'); P.list = r.list; P.next = r.upcoming || []; P.last = r.recent || []; P.trends = r.trends; P.weeks = r.weeks; P.onEv = r.onEv || {}; P.admin = !!r.admin; P.err = ''; } catch (e) { P.err = e.message; }
+  if (V.tab === 'wetten') { if (JSON.stringify(P.onEv || {}) !== before) renderList(); } else if (V.tab === 'spieler') renderPlayers(); else if (V.tab === 'trends') renderTrends(); else if (V.tab === 'wochen') renderWeeks();
 }
 async function loadPlayer(name) {
   P.sel = name; P.detail = null; renderPlayers();

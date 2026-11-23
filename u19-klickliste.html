@@ -1,0 +1,144 @@
+<!doctype html>
+<html lang="de-CH">
+<head>
+<meta charset="utf-8">
+<title>U19 Elite · Spielberichte zum Anklicken</title>
+<style>
+  body { margin: 0; background: #1d2230; color: #f4f3ee; font: 15px/1.4 system-ui, "Segoe UI", sans-serif; }
+  header { position: sticky; top: 0; background: #141826; padding: 12px 18px; border-bottom: 3px solid #edac1f; z-index: 2; }
+  h1 { margin: 0; font-size: 19px; } header p { margin: 4px 0 0; color: #b9c1cc; font-size: 13px; }
+  #n { color: #edac1f; font-weight: 700; }
+  main { padding: 12px 18px 40px; }
+  h2 { font-size: 13px; text-transform: uppercase; letter-spacing: .05em; color: #edac1f; margin: 18px 0 8px; }
+  .grid { display: grid; grid-template-columns: repeat(auto-fill, minmax(260px, 1fr)); gap: 8px; }
+  a { display: flex; justify-content: space-between; gap: 10px; padding: 14px 14px; border-radius: 10px; background: #2b3550; color: #fff; text-decoration: none; font-weight: 600; border: 2px solid transparent; }
+  a:hover { border-color: #edac1f; }
+  a b { color: #edac1f; white-space: nowrap; }
+  .wrap { display: flex; } .wrap main { flex: 1; min-width: 0; }
+  #frames { width: 34%; display: flex; flex-direction: column; gap: 6px; padding: 12px 12px 0 0; }
+  #frames iframe { width: 100%; height: 220px; border: 2px solid #edac1f; border-radius: 8px; background: #fff; }
+  #frames:empty { display: none; }
+  a.done { background: #1f5a3a; } a.done::after { content: "✓"; }
+</style>
+</head>
+<body>
+<header>
+  <h1>U19 Elite · Spielberichte</h1>
+  <p>Klick ein Spiel an: Der Bericht geht kurz auf, ich lese ihn und bringe dich nach ein paar Sekunden automatisch hierher zurück. Dann das nächste anklicken. Angeklickt: <span id="n">0</span> von <span id="t">0</span>. Neueste Runde zuoberst.</p>
+</header>
+<div class="wrap"><main id="m"></main><aside id="frames"></aside></div>
+<script>
+const LIST = `4311433|FC Zürich - Grasshopper Club Zürich 1 : 3
+4311431|FCO St. Gallen - FC Basel 1893 2 : 4
+4311435|FC Aarau - Team Xamax-BEJUNE FA 2 : 4
+4311430|FC Lausanne-Sport - FC Thun Berner Oberland 2 : 2
+4311434|Servette FC - FC Winterthur 2 : 3
+4311436|FC Sion - FC Luzern 3 : 6
+4311432|FC Lugano - BSC Young Boys 0 : 2
+4311439|Team Xamax-BEJUNE FA - Servette FC 1 : 0
+4311440|FC Winterthur - FC Zürich 1 : 1
+4311438|FC Luzern - FC Aarau 8 : 1
+4311437|FC Sion - FC Lausanne-Sport 2 : 4
+4311441|Grasshopper Club Zürich - FC Lugano 10 : 1
+4311442|BSC Young Boys - FCO St. Gallen 3 : 1
+4311443|FC Basel 1893 - FC Thun Berner Oberland 1 : 1
+4311446|FCO St. Gallen - Grasshopper Club Zürich 2 : 2
+4311444|FC Lausanne-Sport - FC Basel 1893 2 : 4
+4311450|FC Aarau - FC Sion 2 : 1
+4311448|FC Zürich - Team Xamax-BEJUNE FA 2 : 1
+4311449|Servette FC - FC Luzern 1 : 1
+4311445|FC Thun Berner Oberland - BSC Young Boys 0 : 3
+4311447|FC Lugano - FC Winterthur 1 : 4
+4311453|FC Luzern - FC Zürich 2 : 1
+4311452|FC Sion - Servette FC 2 : 2
+4311455|FC Winterthur - FCO St. Gallen 5 : 1
+4311457|BSC Young Boys - FC Basel 1893 6 : 4
+4311456|Grasshopper Club Zürich - FC Thun Berner Oberland 3 : 3
+4311451|FC Aarau - FC Lausanne-Sport 0 : 3
+4311454|Team Xamax-BEJUNE FA - FC Lugano 4 : 2
+4311460|FC Thun Berner Oberland - FC Winterthur 1 : 4
+4311458|FC Lausanne-Sport - BSC Young Boys 3 : 3
+4311464|Servette FC - FC Aarau 4 : 1
+4311463|FC Zürich - FC Sion 3 : 2
+4311461|FCO St. Gallen - Team Xamax-BEJUNE FA 2 : 2
+4311459|FC Basel 1893 - Grasshopper Club Zürich 1 : 1
+4311462|FC Lugano - FC Luzern 0 : 1
+4311466|FC Aarau - FC Zürich 1 : 2
+4311465|Servette FC - FC Lausanne-Sport 1 : 0
+4311467|FC Sion - FC Lugano 4 : 2
+4311468|FC Luzern - FCO St. Gallen 2 : 1
+4311469|Team Xamax-BEJUNE FA - FC Thun Berner Oberland 3 : 3
+4311471|Grasshopper Club Zürich - BSC Young Boys 0 : 2
+4311475|FC Thun Berner Oberland - FC Luzern 2 : 2
+4311473|BSC Young Boys - FC Winterthur 0 : 0
+4311478|FC Zürich - Servette FC 2 : 1
+4311472|FC Lausanne-Sport - Grasshopper Club Zürich 1 : 0
+4311476|FCO St. Gallen - FC Sion 1 : 0
+4311474|FC Basel 1893 - Team Xamax-BEJUNE FA 7 : 3
+4311477|FC Lugano - FC Aarau 4 : 2
+4311483|FC Luzern - FC Basel 1893 5 : 0
+4311485|FC Winterthur - Grasshopper Club Zürich 1 : 0
+4311481|FC Aarau - FCO St. Gallen 2 : 5
+4311479|FC Zürich - FC Lausanne-Sport 1 : 1
+4311482|FC Sion - FC Thun Berner Oberland 1 : 3
+4311484|Team Xamax-BEJUNE FA - BSC Young Boys 3 : 1
+4311480|Servette FC - FC Lugano 3 : 2
+4311490|FC Thun Berner Oberland - FC Aarau 4 : 0
+4311488|BSC Young Boys - FC Luzern 2 : 5
+4311486|FC Lausanne-Sport - FC Winterthur 1 : 1
+4311489|FC Basel 1893 - FC Sion 1 : 0
+4311487|Grasshopper Club Zürich - Team Xamax-BEJUNE FA 1 : 0
+4311491|FCO St. Gallen - Servette FC 3 : 2
+4311492|FC Lugano - FC Zürich 2 : 3
+4311494|FC Zürich - FCO St. Gallen 3 : 3
+4311498|FC Luzern - Grasshopper Club Zürich 7 : 0
+4311496|FC Aarau - FC Basel 1893 0 : 2
+4311495|Servette FC - FC Thun Berner Oberland 3 : 1
+4311497|FC Sion - BSC Young Boys 2 : 2
+4311499|Team Xamax-BEJUNE FA - FC Winterthur 3 : 1
+4311493|FC Lugano - FC Lausanne-Sport 1 : 0
+4311501|FC Winterthur - FC Luzern 2 : 3
+4311505|FC Thun Berner Oberland - FC Zürich 2 : 0
+4311506|FCO St. Gallen - FC Lugano 2 : 1
+4311500|FC Lausanne-Sport - Team Xamax-BEJUNE FA 4 : 4
+4311503|BSC Young Boys - FC Aarau 3 : 1
+4311504|FC Basel 1893 - Servette FC 3 : 2
+4311502|Grasshopper Club Zürich - FC Sion 0 : 1
+4311513|FC Luzern - Team Xamax-BEJUNE FA 8 : 2
+4311509|FC Zürich - FC Basel 1893 2 : 2
+4311511|FC Aarau - Grasshopper Club Zürich 2 : 3
+4311512|FC Sion - FC Winterthur 5 : 4
+4311507|FCO St. Gallen - FC Lausanne-Sport 3 : 1
+4311508|FC Lugano - FC Thun Berner Oberland 2 : 2
+4311510|Servette FC - BSC Young Boys 2 : 3
+4311519|FC Basel 1893 - FC Lugano 4 : 1
+4311518|BSC Young Boys - FC Zürich 1 : 2
+4311514|FC Lausanne-Sport - FC Luzern 3 : 6
+4311516|FC Winterthur - FC Aarau 6 : 0
+4311515|Team Xamax-BEJUNE FA - FC Sion 3 : 2
+4311517|Grasshopper Club Zürich - Servette FC 3 : 2
+4311339|FC Thun Berner Oberland - FC Lausanne-Sport 6 : 4
+4311343|FC Winterthur - Servette FC 4 : 3
+4311345|FC Luzern - FC Sion 4 : 0
+4311341|BSC Young Boys - FC Lugano 6 : 0
+4311340|FC Basel 1893 - FCO St. Gallen 5 : 3
+4311344|Team Xamax-BEJUNE FA - FC Aarau 3 : 1
+4311342|Grasshopper Club Zürich - FC Zürich 2 : 3`;
+const rows = LIST.split('\n').map((l) => { const [id, t] = l.split('|'); const m = t.match(/^(.*) (\d+ : \d+)$/); return { id, teams: m[1].replace(' Berner Oberland', '').replace('Team Xamax-BEJUNE FA', 'Xamax'), score: m[2] }; });
+const seen = new Set(JSON.parse(localStorage.getItem('u19seen') || '[]'));
+// von hinten in 7er-Blöcke teilen, damit die neueste Runde (21.11.) vollständig zuoberst steht
+const groups = [];
+for (let e = rows.length; e > 0; e -= 7) { const s = Math.max(0, e - 7); groups.unshift([e === rows.length ? 'Letzte Runde (21.11.)' : `Spiele ${s + 1}–${e}`, rows.slice(s, e)]); }
+document.getElementById('t').textContent = rows.length;
+const count = () => { document.getElementById('n').textContent = rows.filter((r) => seen.has(r.id)).length; };
+document.getElementById('m').innerHTML = groups.reverse().map(([d, list]) => `<h2>${d}</h2><div class="grid">${list.map((r) => `<a href="https://matchcenter.football.ch/default.aspx?oid=1&lng=1&ln=&v=0&tg=${r.id}" data-id="${r.id}" class="${seen.has(r.id) ? 'done' : ''}">${r.teams} <b>${r.score}</b></a>`).join('')}</div>`).join('');
+// Bericht öffnet im selben Tab; Claude liest ihn und holt die Liste automatisch zurück
+count();
+// Claude bringt den gelesenen Bericht im #r=… zurück: hier lokal speichern
+if (location.hash.startsWith('#r=')) {
+  const body = decodeURIComponent(location.hash.slice(3)); history.replaceState(null, '', location.pathname);
+  fetch('http://localhost:5215/', { method: 'POST', body }).then((r) => r.text()).then((tg) => { document.title = 'gespeichert ' + tg; seen.add(tg); localStorage.setItem('u19seen', JSON.stringify([...seen])); document.querySelector(`a[data-id="${tg}"]`)?.classList.add('done'); count(); });
+}
+</script>
+</body>
+</html>
