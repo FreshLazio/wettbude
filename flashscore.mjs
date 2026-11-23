@@ -11,7 +11,7 @@ const HDR = {
   'x-fsign': 'SW9D1eZo',
   referer: 'https://www.flashscore.com/',
 };
-export const FS_SPORT = { fussball: 1, tennis: 2, basketball: 3, eishockey: 4, amfootball: 5, rugby: 8 };
+export const FS_SPORT = { fussball: 1, tennis: 2, basketball: 3, eishockey: 4, amfootball: 5, rugby: 8, darts: 14 };
 const PRIO = [16, 1]; // bet365, Interwetten
 const NAMES = { 16: 'bet365', 1: 'Interwetten', 645: 'bet-at-home', 3: 'bet-at-home' };
 
@@ -70,6 +70,7 @@ const FS_LEAGUES = {
   'conmebol.libertadores': 'SOUTH AMERICA: Copa Libertadores', 'conmebol.sudamericana': 'SOUTH AMERICA: Copa Sudamericana',
   nhl: 'USA: NHL', 'sui.nl': 'SWITZERLAND: National League', 'sui.sl': 'SWITZERLAND: Swiss League', 'swe.shl': 'SWEDEN: SHL', 'nor.ehl': 'NORWAY: EHL', 'rus.khl': 'RUSSIA: KHL',
   nba: 'USA: NBA', wnba: 'USA: WNBA', 'mens-college-basketball': 'USA: NCAA', nbl: 'AUSTRALIA: NBL',
+  euroleague: 'EUROPE: Euroleague', eurocup: 'EUROPE: EuroCup',
   nfl: 'USA: NFL', 'college-football': 'USA: NCAA',
   // Rugby: Flashscore führt einige Wettbewerbe je nach Saison unter EUROPE oder WORLD, darum mehrere Namen.
   'rug.top14': 'FRANCE: Top 14', 'rug.prod2': 'FRANCE: Pro D2', 'rug.prem': ['ENGLAND: Premiership Rugby', 'ENGLAND: Premiership'],
@@ -77,10 +78,12 @@ const FS_LEAGUES = {
   'rug.six': ['EUROPE: Six Nations', 'WORLD: Six Nations'], 'rug.rc': 'WORLD: The Rugby Championship', 'rug.nc': ['WORLD: Nations Championship', 'WORLD: World Rugby Nations Cup'],
   'rug.friendly': 'WORLD: Friendly International', 'rug.super': ['WORLD: Super Rugby', 'WORLD: Super Rugby Pacific'], 'rug.wc': 'WORLD: World Cup',
 };
-const FS_SPORT_OF = (slug) => (/^(nhl|sui\.nl|sui\.sl|swe\.shl|nor\.ehl|rus\.khl)$/.test(slug) ? 'eishockey' : /^(nba|wnba|mens-college-basketball|nbl)$/.test(slug) ? 'basketball'
+const FS_SPORT_OF = (slug) => (/^(nhl|sui\.nl|sui\.sl|swe\.shl|nor\.ehl|rus\.khl)$/.test(slug) ? 'eishockey' : /^(nba|wnba|mens-college-basketball|nbl|euroleague|eurocup)$/.test(slug) ? 'basketball'
   : /^(nfl|college-football)$/.test(slug) ? 'amfootball' : slug.startsWith('rug.') ? 'rugby' : 'fussball');
 export function fsLeague(sport, name) {
   if (sport === 'tennis') return /^ATP - SINGLES:/.test(name) ? 'atp' : /^WTA - SINGLES:/.test(name) ? 'wta' : null;
+  // Darts: alle Turniere der Welt- und Europa-Tour, ohne Junioren, Frauen-Nebenturniere und Paare
+  if (sport === 'darts') return /^(WORLD|EUROPE):/.test(name) && !/youth|women|pairs|modus|junior/i.test(name) ? 'darts' : null;
   for (const [slug, keys] of Object.entries(FS_LEAGUES)) {
     if (FS_SPORT_OF(slug) !== sport) continue;
     for (const key of [].concat(keys)) if (name === key || name.startsWith(key + ' - ')) return slug;
@@ -142,6 +145,8 @@ export function parseOdds(j, hp, ap, sport, nohalf) {
     const items = (o.odds || []).filter((i) => i.active !== false && +i.value > 1.001);
     if (!items.length) continue;
     const T = o.bettingType, S = o.bettingScope, b = o.bookmakerId;
+    // Darts: nur der Sieger (Über/Unter und Handicap zählen je nach Turnier Legs oder Sätze)
+    if (sport === 'darts' && T !== 'HOME_AWAY') continue;
     if (T === 'HOME_DRAW_AWAY' && (soccer || ice || rugby) &&(S === 'FULL_TIME' || (soccer && !nohalf && S === 'FIRST_HALF'))) {
       const w = {};
       for (const i of items) { const s = side(i); if (s) w[s] = val(i); else if (!i.eventParticipantId) w.X = val(i); }

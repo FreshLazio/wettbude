@@ -21,7 +21,7 @@ const SITE = 'https://site.api.espn.com/apis/site/v2/sports/';
 const CORE = 'https://sports.core.api.espn.com/v2/sports/';
 const DAY = 864e5;
 
-const F = 'fussball', B = 'basketball', H = 'eishockey', T = 'tennis', AF = 'amfootball', R = 'rugby';
+const F = 'fussball', B = 'basketball', H = 'eishockey', T = 'tennis', AF = 'amfootball', R = 'rugby', D = 'darts';
 const LEAGUES = [
   [F, 'soccer', 'sui.1', 'Super League', 'Schweiz'],
   [F, 'soccer', 'sui.2', 'Challenge League', 'Schweiz'],
@@ -115,6 +115,9 @@ const LEAGUES = [
   [B, 'basketball', 'mens-college-basketball', 'NCAA', 'USA'],
   [B, 'basketball', 'nbl', 'NBL', 'Australien'],
   // Nur über Flashscore (ESPN-Kürzel leer)
+  [B, null, 'euroleague', 'EuroLeague', 'International'],
+  [B, null, 'eurocup', 'EuroCup', 'International'],
+  [D, null, 'darts', 'PDC und weitere Turniere', 'Welt'],
   [AF, null, 'nfl', 'NFL', 'USA'],
   [AF, null, 'college-football', 'College Football', 'USA'],
   [R, null, 'rug.top14', 'Top 14', 'Frankreich'],
@@ -555,6 +558,7 @@ function fsEvent(sport, slug, x) {
     ph: x.st === 2 ? x.ac : null,
   };
   if (sport === T) ev.tour = x.lg.replace(/^(ATP|WTA) - SINGLES:\s*/, '');
+  if (sport === D) ev.tour = x.lg.replace(/^[A-Z &]+:\s*/, '');
   return ev;
 }
 
@@ -604,7 +608,7 @@ async function fsSweep() {
     && now - (e.fsAt || 0) > (e.start - now < 3 * 36e5 ? 10 : e.start - now < DAY ? 30 : 120) * 6e4);
   // Wichtige Ligen zuerst (als ob sie 4 Tage früher spielten), dann nach Anstoss.
   // Kleine Ligen wie College-Basketball (Hunderte Spiele) kommen danach.
-  const TOPL = /^(nfl|nba|nhl|sui\.|ita\.[12]$|ita\.[cd]|eng\.1|esp\.1|ger\.1|fra\.1|uefa\.|arg\.1|rug\.)/;
+  const TOPL = /^(nfl|nba|nhl|euroleague|darts|sui\.|ita\.[12]$|ita\.[cd]|eng\.1|esp\.1|ger\.1|fra\.1|uefa\.|arg\.1|rug\.)/;
   const prio = (e) => e.start - (TOPL.test(e.lg) ? 4 * DAY : 0) + (/college/.test(e.lg) ? DAY : 0);
   due.sort((a, b) => prio(a) - prio(b));
   await pool(due.slice(0, 900), 4, async (ev) => {

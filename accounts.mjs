@@ -250,19 +250,100 @@ export function accounts({ dataDir, enrich = (b) => b }) {
     return { leagues: top(lg), teams: top(tm), events: ev, bets: all.length, totals, week, streaks, hotGames, sports };
   }
 
+  // Wochen-Statistik: abgerechnete Scheine aller Spieler der letzten WEEKS Wochen (Wochen ab Montag, Zürcher Zeit)
+  const WEEKS = 12;
+  const zOff = (t) => { const d = new Date(t); return Date.parse(d.toLocaleString('en-US', { timeZone: 'Europe/Zurich' }) + ' UTC') - Math.floor(t / 1000) * 1000; };
+  const weekStart = (t) => {
+    const z = new Date(t + zOff(t)), day = (z.getUTCDay() + 6) % 7;
+    const s = Date.UTC(z.getUTCFullYear(), z.getUTCMonth(), z.getUTCDate() - day);
+    return s - zOff(s);
+  };
+  const weekDay = (t) => (new Date(t + zOff(t)).getUTCDay() + 6) % 7;
+  function weeksOf(hist) {
+    const r2 = (v) => Math.round(v * 100) / 100;
+    const now = Date.now(), cur = weekStart(now);
+    const starts = [];
+    for (let i = WEEKS - 1; i >= 0; i--) starts.push(weekStart(cur - i * 7 * 864e5 + 12 * 36e5));
+    const W = starts.map((w) => ({ w, n: 0, won: 0, lost: 0, stake: 0, paid: 0, odds: 0, kombi: 0, who: new Map(), sp: new Map(), lg: new Map(),
+      days: Array.from({ length: 7 }, () => ({ n: 0, won: 0, lost: 0, stake: 0, net: 0, best: 0, bestWho: '', who: new Set() })), items: [] }));
+    // Sportart/Liga: jeder Schein wird gleichmässig auf seine Tipps verteilt (wie bei den Trends)
+    const tally = (m, k, extra, l, part, net, stake) => {
+      const r = m.get(k) || { k, ...extra, n: 0, w: 0, l: 0, net: 0, stake: 0, odds: 0 };
+      r.n++; r.net += net * part; r.stake += stake * part; r.odds += +l.o || 0;
+      if (l.res === 'won') r.w++; else if (l.res === 'lost') r.l++;
+      m.set(k, r);
+    };
+    const idx = new Map(starts.map((w, i) => [w, i]));
+    const txt = (b) => (b.legs.length > 1 ? `${b.legs.length}er-Kombi` : `«${b.legs[0].pick}» · ${b.legs[0].match}`);
+    const rec = (b, extra) => b && { who: b.who, o: r2(b.o), stake: r2(b.stake), net: r2((b.payout || 0) - b.stake), txt: txt(b), t: b.at, bet: b, ...extra };
+    const B = [[1, 1.5], [1.5, 2], [2, 3], [3, 5], [5, 10], [10, Infinity]].map(([a, c]) => ({ a, c, n: 0, w: 0, exp: 0, net: 0 }));
+    const per = new Map();
+    for (const b of hist) {
+      const i = idx.get(weekStart(b.at));
+      if (i == null) continue;
+      const x = W[i], net = (b.payout || 0) - b.stake;
+      x.n++; x.stake += b.stake; x.paid += b.payout || 0; x.odds += b.o;
+      if (b.status === 'won') x.won++; else x.lost++;
+      if (b.legs.length > 1) x.kombi++;
+      x.who.set(b.who, (x.who.get(b.who) || 0) + net);
+      const d = x.days[weekDay(b.at)]; d.n++; d.net += net; d.stake += b.stake; d.who.add(b.who);
+      if (b.status === 'won') { d.won++; if (b.o > d.best) { d.best = b.o; d.bestWho = b.who; } } else d.lost++;
+      for (const l of b.legs) { tally(x.sp, l.sp || 'andere', {}, l, 1 / b.legs.length, net, b.stake); if (l.lg) tally(x.lg, l.lg, { sp: l.sp }, l, 1 / b.legs.length, net, b.stake); }
+      x.items.push(b);
+      const k = B.find((y) => b.o >= y.a && b.o < y.c) || B[0];
+      k.n++; k.exp += 1 / b.o; k.net += net; if (b.status === 'won') k.w++;
+      const p = per.get(b.who) || Array(WEEKS).fill(null);
+      p[i] = (p[i] || 0) + net; per.set(b.who, p);
+    }
+    const max = (arr, f) => arr.reduce((m, b) => (!m || f(b) > f(m) ? b : m), null);
+    const row = (r) => ({ k: r.k, sp: r.sp, n: r.n, w: r.w, l: r.l, net: r2(r.net), roi: r.stake ? Math.round(r.net / r.stake * 100) : null, avg: r2(r.odds / r.n) });
+    const weeks = W.map((x) => {
+      const won = x.items.filter((b) => b.status === 'won'), lost = x.items.filter((b) => b.status === 'lost');
+      const ranked = [...x.who.entries()].sort((a, c) => c[1] - a[1]);
+      return {
+        w: x.w, n: x.n, won: x.won, lost: x.lost, stake: r2(x.stake), paid: r2(x.paid), net: r2(x.paid - x.stake),
+        hit: x.n ? Math.round(x.won / x.n * 100) : null, avgO: x.n ? r2(x.odds / x.n) : null,
+        kombi: x.n ? Math.round(x.kombi / x.n * 100) : null, players: x.who.size,
+        days: x.days.map((d) => ({ n: d.n, won: d.won, lost: d.lost, stake: r2(d.stake), net: r2(d.net), best: r2(d.best), bestWho: d.bestWho, players: d.who.size })),
+        sports: [...x.sp.values()].map(row).sort((a, c) => c.n - a.n),
+        leagues: [...x.lg.values()].map(row).sort((a, c) => c.n - a.n || c.net - a.net).slice(0, 30),
+        best: rec(max(won, (b) => b.o)), low: rec(max(lost, (b) => -b.o)), longMiss: rec(max(lost, (b) => b.o)),
+        big: rec(max(won, (b) => b.payout - b.stake)), loss: rec(max(lost.filter((b) => !b.ins), (b) => b.stake)),
+        top: ranked.length && ranked[0][1] > 0 ? { who: ranked[0][0], net: r2(ranked[0][1]) } : null,
+        flop: ranked.length && ranked[ranked.length - 1][1] < 0 ? { who: ranked[ranked.length - 1][0], net: r2(ranked[ranked.length - 1][1]) } : null,
+      };
+    });
+    const act = weeks.filter((x) => x.n);
+    const mean = (f) => (act.length ? r2(act.reduce((s, x) => s + f(x), 0) / act.length) : null);
+    const avg = { n: mean((x) => x.n), stake: mean((x) => x.stake), net: mean((x) => x.net), hit: mean((x) => x.hit), avgO: mean((x) => x.avgO), players: mean((x) => x.players), weeks: act.length };
+    const buckets = B.map((k) => ({ k: k.c === Infinity ? `ab ${k.a}` : `${k.a}–${k.c}`, n: k.n, w: k.w, hit: k.n ? Math.round(k.w / k.n * 100) : null, exp: k.n ? Math.round(k.exp / k.n * 100) : null, net: r2(k.net) }));
+    const matrix = [...per.entries()].map(([who, cells]) => ({ who, cells: cells.map((v) => (v == null ? null : r2(v))), sum: r2(cells.reduce((s, v) => s + (v || 0), 0)) }))
+      .sort((a, c) => c.sum - a.sum).slice(0, 15);
+    // Alle Wochen zusammen: beste und schlechteste Quoten
+    const done = hist.filter((b) => idx.has(weekStart(b.at)));
+    const won = done.filter((b) => b.status === 'won'), lost = done.filter((b) => b.status === 'lost');
+    const records = {
+      best: rec(max(won, (b) => b.o)), low: rec(max(lost, (b) => -b.o)),
+      big: rec(max(won, (b) => b.payout - b.stake)), loss: rec(max(lost.filter((b) => !b.ins), (b) => b.stake)),
+      bestWeek: max(act, (x) => x.net) && { w: max(act, (x) => x.net).w, net: max(act, (x) => x.net).net },
+      worstWeek: max(act, (x) => -x.net) && { w: max(act, (x) => -x.net).w, net: max(act, (x) => -x.net).net },
+    };
+    return { weeks, avg, buckets, matrix, records, cur };
+  }
+
   return {
     remote,
     async players(token) {
       const [me] = await user(token);
       const admin = me === ADMIN;
-      if (board && Date.now() - board.at < 60e3) return { list: board.list, upcoming: board.upcoming, recent: board.recent, trends: board.trends, admin };
+      if (board && Date.now() - board.at < 60e3) return { list: board.list, upcoming: board.upcoming, recent: board.recent, trends: board.trends, weeks: board.weeks, admin };
       // Alle Profile: in Upstash per SCAN über «wb:user:*», lokal alle Schlüssel der Datei.
       const keys = [];
       if (remote) {
         let cur = '0';
         do { const [next, found] = await cmd(['SCAN', cur, 'MATCH', 'wb:user:*', 'COUNT', '200']); cur = String(next); keys.push(...found.map((x) => x.slice(3))); } while (cur !== '0' && keys.length < 5000);
       } else keys.push(...Object.keys(store()).filter((x) => x.startsWith('user:')));
-      const list = [], next = [], last = [], all = [], people = [];
+      const list = [], next = [], last = [], all = [], people = [], hist = [];
       const now = Date.now();
       // Nächster Anpfiff eines Scheins: frühester Start der noch offenen Tipps
       const kick = (b) => Math.min(...(b.legs || []).filter((l) => !l.res).map((l) => +l.start || Infinity), Infinity);
@@ -283,6 +364,13 @@ export function accounts({ dataDir, enrich = (b) => b }) {
         let n = 0;
         while (n < settled.length && settled[n].status === settled[0].status) n++;
         people.push({ name: u.name, streak: n ? { kind: settled[0].status, n } : null });
+        // Für die Wochen-Statistik: alle abgerechneten Scheine der letzten Wochen (inkl. schon feststehender offener)
+        const since = now - (WEEKS + 1) * 7 * 864e5;
+        for (const b of settled) {
+          const at = b.done || b.t;
+          if (at < since || !Array.isArray(b.legs) || !b.legs.length || !(+b.stake > 0)) continue;
+          hist.push({ ...(b.who ? b : { ...structuredClone(b), who: u.name }), at, o: oddsOf(b) });
+        }
       }
       // Rangliste nach Geld (Guthaben), bei Gleichstand nach Gewinn
       list.sort((a, b) => b.bal - a.bal || b.profit - a.profit);
@@ -291,8 +379,9 @@ export function accounts({ dataDir, enrich = (b) => b }) {
       // Zuletzt abgerechnete Siege und Niederlagen aller Spieler, neueste zuerst
       const recent = last.sort((a, b) => (b.done || b.t) - (a.done || a.t)).slice(0, 40);
       const trends = trendsOf(all, people);
-      board = { at: Date.now(), list, upcoming, recent, trends };
-      return { list, upcoming, recent, trends, admin };
+      const weeks = weeksOf(hist);
+      board = { at: Date.now(), list, upcoming, recent, trends, weeks };
+      return { list, upcoming, recent, trends, weeks, admin };
     },
     // Nur der Admin (Rafael) kann anderen Geld geben. Das Startbudget steigt mit, damit es nicht als Gewinn zählt.
     async gift(token, { name, amount }) {

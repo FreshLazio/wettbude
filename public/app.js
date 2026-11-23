@@ -3,7 +3,7 @@ import { combinable, groupOdds } from './builder.js';
 
 const LS = 'wettbude.v1', START = 500, MIN = 0.5;
 const KOMBI_MAX = 20, SYS_MAX = 10; // wie bei Interwetten höchstens 20 Tipps pro Kombi
-const SPORTS = [['fussball', 'Fussball'], ['tennis', 'Tennis'], ['eishockey', 'Eishockey'], ['basketball', 'Basketball'], ['amfootball', 'American Football'], ['rugby', 'Rugby']];
+const SPORTS = [['fussball', 'Fussball'], ['tennis', 'Tennis'], ['eishockey', 'Eishockey'], ['basketball', 'Basketball'], ['amfootball', 'American Football'], ['rugby', 'Rugby'], ['darts', 'Darts']];
 const POINTS = new Set(['basketball', 'amfootball', 'rugby']);
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -473,8 +473,8 @@ const P = { list: null, at: 0, sel: null, detail: null, err: '', tSort: {}, tAll
 async function loadPlayers(force) {
   if (!S.tok || (!force && P.list && Date.now() - P.at < 60e3)) return;
   P.at = Date.now();
-  try { const r = await api('players'); P.list = r.list; P.next = r.upcoming || []; P.last = r.recent || []; P.trends = r.trends; P.admin = !!r.admin; P.err = ''; } catch (e) { P.err = e.message; }
-  if (V.tab === 'spieler') renderPlayers(); else if (V.tab === 'trends') renderTrends();
+  try { const r = await api('players'); P.list = r.list; P.next = r.upcoming || []; P.last = r.recent || []; P.trends = r.trends; P.weeks = r.weeks; P.admin = !!r.admin; P.err = ''; } catch (e) { P.err = e.message; }
+  if (V.tab === 'spieler') renderPlayers(); else if (V.tab === 'trends') renderTrends(); else if (V.tab === 'wochen') renderWeeks();
 }
 async function loadPlayer(name) {
   P.sel = name; P.detail = null; renderPlayers();
@@ -604,6 +604,214 @@ function renderTrends() {
     <h4 class="secHead">Teams</h4>${rank('teams', T.teams, 'Team')}
     ${spSum ? `<h4 class="secHead">Tipps nach Sportart</h4><div class="trList">${T.sports.map((s) => `<div class="trRow"><span class="rank"></span><span class="trName"><b>${esc(SP[s.k] || s.k)}</b><i class="trBar" style="width:${Math.max(4, s.n / spMax * 100)}%"></i></span><span class="trN">${Math.round(s.n / spSum * 100)} %<small>${s.n} Tipps</small></span></div>`).join('')}</div>` : ''}`;
 }
+
+/* ---------- Wochen: Statistik pro Woche mit Wochenschnitt ---------- */
+
+const kw = (w) => { const d = new Date(w + 3 * 864e5); const y = new Date(d.getFullYear(), 0, 4); return 1 + Math.round(((d - y) / 864e5 - 3 + ((y.getDay() + 6) % 7)) / 7); };
+const dmy = (t) => new Date(t).toLocaleDateString('de-CH', { day: '2-digit', month: '2-digit' });
+const weekName = (w) => `KW ${kw(w)} · ${dmy(w)}–${dmy(w + 6 * 864e5)}`;
+// Balken mit gerundetem Ende (4px) weg von der Nulllinie, flach an der Nulllinie
+function barPath(x, y0, y1, w) {
+  const h = Math.abs(y1 - y0), r = Math.min(4, h, w / 2), up = y1 < y0;
+  if (h < 0.5) return '';
+  return up ? `M${x},${y0}V${y1 + r}Q${x},${y1} ${x + r},${y1}H${x + w - r}Q${x + w},${y1} ${x + w},${y1 + r}V${y0}Z`
+    : `M${x},${y0}V${y1 - r}Q${x},${y1} ${x + r},${y1}H${x + w - r}Q${x + w},${y1} ${x + w},${y1 - r}V${y0}Z`;
+}
+const niceMax = (v) => { if (v <= 0) return 1; const p = 10 ** Math.floor(Math.log10(v)), m = v / p; return (m <= 1 ? 1 : m <= 2 ? 2 : m <= 2.5 ? 2.5 : m <= 5 ? 5 : 10) * p; };
+const kfmt = (v) => (Math.abs(v) >= 1000 ? `${r2(v / 1000)}k` : `${Math.round(v)}`);
+
+// Plus/Minus pro Woche: Balken nach oben (Plus) oder unten (Minus), Wochenschnitt gestrichelt
+function netChart(weeks, avg, sel) {
+  const W = 720, H = 230, L = 46, R = 10, T = 16, Bm = 34;
+  const m = niceMax(Math.max(1, ...weeks.map((x) => Math.abs(x.net)), Math.abs(avg ?? 0)));
+  const y = (v) => T + (m - v) / (2 * m) * (H - T - Bm), step = (W - L - R) / weeks.length, bw = Math.min(38, step * 0.62);
+  const ticks = [m, m / 2, 0, -m / 2, -m];
+  return `<svg class="chart" viewBox="0 0 ${W} ${H}" role="img" aria-label="Plus und Minus aller Spieler pro Woche">
+    ${ticks.map((t) => `<line class="${t === 0 ? 'base' : 'grid'}" x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}"/><text class="ax" x="${L - 6}" y="${y(t) + 4}" text-anchor="end">${t > 0 ? '+' : ''}${kfmt(t)}</text>`).join('')}
+    ${weeks.map((x, i) => {
+      const cx = L + step * i + step / 2, on = i === sel;
+      return `<g class="wk ${on ? 'on' : ''}" data-act="wSel" data-i="${i}" data-tip="${esc(weekName(x.w))}\n${x.n ? `${x.n} Wetten · ${x.net > 0 ? '+' : ''}CHF ${chf(x.net)}\nTrefferquote ${x.hit} % · Ø Quote ${q(x.avgO)}` : 'keine abgerechneten Wetten'}">
+        <rect class="hit" x="${cx - step / 2}" y="${T}" width="${step}" height="${H - T - Bm + 20}"/>
+        ${x.n ? `<path class="${x.net >= 0 ? 'up' : 'down'}" d="${barPath(cx - bw / 2, y(0), y(x.net), bw)}"/>` : `<circle class="none" cx="${cx}" cy="${y(0)}" r="2"/>`}
+        ${on && x.n ? `<text class="val" x="${cx}" y="${x.net >= 0 ? y(x.net) - 6 : y(x.net) + 14}" text-anchor="middle">${x.net > 0 ? '+' : ''}${kfmt(x.net)}</text>` : ''}
+        <text class="ax ${on ? 'axOn' : ''}" x="${cx}" y="${H - Bm + 18}" text-anchor="middle">KW ${kw(x.w)}</text>
+      </g>`;
+    }).join('')}
+    ${avg != null ? `<line class="avgLine" x1="${L}" x2="${W - R}" y1="${y(avg)}" y2="${y(avg)}"/><text class="avgTxt" x="${L + 4}" y="${y(avg) - 5}" text-anchor="start">Ø ${avg > 0 ? '+' : ''}${kfmt(avg)}</text>` : ''}
+  </svg>`;
+}
+// Kleine Wochen-Grafik: Balken oder Linie für eine Kennzahl, Wochenschnitt gestrichelt
+function miniChart(weeks, key, avg, sel, opt) {
+  const W = 340, H = 150, L = 34, R = 8, T = 14, Bm = 22;
+  const vals = weeks.map((x) => x[key]), m = opt.max ?? niceMax(Math.max(1, ...vals.filter((v) => v != null), avg ?? 0));
+  const lo = opt.min ?? 0;
+  const y = (v) => T + (m - v) / (m - lo) * (H - T - Bm), step = (W - L - R) / weeks.length;
+  const cx = (i) => L + step * i + step / 2;
+  const fmt = opt.fmt || ((v) => v);
+  let marks = '';
+  if (opt.line) {
+    const segs = []; let cur = [];
+    vals.forEach((v, i) => { if (v == null) { if (cur.length) segs.push(cur); cur = []; } else cur.push(`${cx(i)},${y(v)}`); });
+    if (cur.length) segs.push(cur);
+    marks = segs.map((s) => `<polyline class="ln" points="${s.join(' ')}"/>`).join('')
+      + vals.map((v, i) => (v == null ? '' : `<circle class="dot ${i === sel ? 'on' : ''}" cx="${cx(i)}" cy="${y(v)}" r="${i === sel ? 5 : 4}"/>`)).join('');
+  } else {
+    const bw = Math.min(18, step * 0.6);
+    marks = vals.map((v, i) => (v ? `<path class="bar ${i === sel ? 'on' : ''}" d="${barPath(cx(i) - bw / 2, y(lo), y(v), bw)}"/>` : '')).join('');
+  }
+  const hits = weeks.map((x, i) => `<rect class="hit" data-act="wSel" data-i="${i}" data-tip="${esc(weekName(x.w))}\n${opt.label}: ${x[key] == null ? '–' : fmt(x[key])}" x="${cx(i) - step / 2}" y="${T}" width="${step}" height="${H - T - Bm}"/>`).join('');
+  return `<svg class="chart mini" viewBox="0 0 ${W} ${H}" role="img" aria-label="${esc(opt.label)} pro Woche">
+    ${[m, (m + lo) / 2, lo].map((t) => `<line class="${t === lo ? 'base' : 'grid'}" x1="${L}" x2="${W - R}" y1="${y(t)}" y2="${y(t)}"/><text class="ax" x="${L - 5}" y="${y(t) + 4}" text-anchor="end">${opt.tick ? opt.tick(t) : t}</text>`).join('')}
+    ${avg != null ? `<line class="avgLine" x1="${L}" x2="${W - R}" y1="${y(avg)}" y2="${y(avg)}"/>` : ''}
+    ${marks}${hits}
+    <text class="ax" x="${cx(0)}" y="${H - 5}" text-anchor="middle">KW ${kw(weeks[0].w)}</text><text class="ax" x="${cx(weeks.length - 1)}" y="${H - 5}" text-anchor="middle">KW ${kw(weeks[weeks.length - 1].w)}</text>
+  </svg>`;
+}
+
+// Tabelle nach Sportart oder Liga: Tipps mit Balken, Treffer, Plus/Minus, Ø Quote
+function groupTbl(rows, name, label, more) {
+  if (!rows?.length) return '<p class="empty">Diese Woche noch nichts abgerechnet.</p>';
+  const id = 'wk' + label, all = P.tAll[id], shown = all || !more ? rows : rows.slice(0, 8);
+  const mx = Math.max(1, ...rows.map((r) => r.n)), SPN = Object.fromEntries(SPORTS);
+  return `<div class="tblWrap"><table class="trTbl wkTbl"><thead><tr><th>${label}</th><th>Tipps</th><th>Treffer</th><th>+/−</th><th class="c-avg">Ø Quote</th></tr></thead>
+    <tbody>${shown.map((r) => `<tr><td class="nm"><b>${esc(name(r.k))}</b>${r.sp && more ? `<small>${esc(SPN[r.sp] || r.sp)}</small>` : ''}<i class="trBar" style="width:${Math.max(4, r.n / mx * 100)}%"></i></td>
+      <td>${r.n}</td>
+      <td>${r.w + r.l ? Math.round(r.w / (r.w + r.l) * 100) + ' %' : '–'}<small><span class="pos">${r.w} ✓</span> <span class="neg">${r.l} ✗</span></small></td>
+      <td>${signed(r.net)}${r.roi != null ? `<small>${r.roi > 0 ? '+' : ''}${r.roi} %</small>` : ''}</td>
+      <td class="c-avg">${q(r.avg)}</td></tr>`).join('')}</tbody></table></div>
+    ${more && rows.length > 8 ? `<button class="moreBtn" data-act="tAll" data-id="${id}" data-r="weeks">${all ? 'Nur die ersten 8' : `Alle ${rows.length} anzeigen`}</button>` : ''}`;
+}
+
+function renderWeeks() {
+  loadPlayers();
+  const D = P.weeks;
+  if (!D) { $('#main').innerHTML = `<p class="empty">${P.err ? esc(P.err) : 'Wochen werden geladen …'}</p>`; return; }
+  const ws = D.weeks, A = D.avg || {};
+  const sel = P.wSel ?? ws.length - 1, x = ws[sel];
+  // Kennzahl der gewählten Woche gegen den Wochenschnitt
+  const delta = (v, a, unit = '', good = 1) => {
+    if (v == null || a == null || !x.n) return '<small>&nbsp;</small>';
+    const d = r2(v - a), cls = d * good > 0 ? 'pos' : d * good < 0 ? 'neg' : '';
+    return `<small>Ø ${unit === 'CHF' ? 'CHF ' + chf(a) : a + unit} · <span class="${cls}">${d > 0 ? '▲ +' : d < 0 ? '▼ ' : '= '}${unit === 'CHF' ? chf(d) : r2(d) + unit}</span></small>`;
+  };
+  const tile = (label, val, extra) => `<div class="stat"><span>${label}</span>${val}${extra}</div>`;
+  const recCard = (id, icon, title, r, val) => `<${r?.bet ? 'button' : 'div'} class="evCard ${P.wRec === id ? 'sel' : ''}" ${r?.bet ? `data-act="wRec" data-id="${id}"` : ''}>
+    <span class="evIcon">${icon}</span><div><small>${title}</small>${r ? `<b>${esc(r.who)}</b><strong>${val(r)}</strong><small>${esc(r.txt || '')}</small>${r.bet ? `<small class="more">${P.wRec === id ? 'Schein ausblenden' : 'Schein ansehen ›'}</small>` : ''}` : '<b class="none">–</b><small>noch nichts</small>'}</div></${r?.bet ? 'button' : 'div'}>`;
+  const R = D.records || {};
+  const recs = {
+    wBest: x.best, wLow: x.low, wLong: x.longMiss, wBig: x.big, wLoss: x.loss,
+    aBest: R.best, aLow: R.low, aBig: R.big, aLoss: R.loss,
+  };
+  const shown = recs[P.wRec];
+  const plus = (r) => `+CHF ${chf(r.net)}`, minus = (r) => `−CHF ${chf(r.stake)}`, odds = (r) => `Quote ${q(r.o)}`;
+  const days = ['Mo', 'Di', 'Mi', 'Do', 'Fr', 'Sa', 'So'], dMax = Math.max(1, ...x.days.map((d) => Math.abs(d.net)));
+  const bk = D.buckets || [], bMax = 100;
+  const mx = D.matrix || [], cMax = Math.max(1, ...mx.flatMap((r) => r.cells.map((v) => Math.abs(v || 0))));
+  // Wurzel-Skala, damit ein einzelner Riesengewinn nicht alle anderen Felder blass macht
+  const heat = (v) => { if (v == null) return ''; const a = Math.sqrt(Math.min(1, Math.abs(v) / cMax)); return `background:rgba(${v >= 0 ? '28,143,77' : '194,64,46'},${0.1 + 0.8 * a});color:${a > 0.6 ? '#fff' : 'var(--ink)'}`; };
+
+  $('#main').innerHTML = `<div class="lgHead"><h3>Wochen</h3><span>Alle Spieler · letzte ${ws.length} Wochen · Woche ab Montag · nur abgerechnete Scheine · Ø = Schnitt der ${A.weeks || 0} Wochen mit Wetten</span></div>
+    <div class="wkPick">
+      <button data-act="wSel" data-i="${Math.max(0, sel - 1)}" ${sel ? '' : 'disabled'}>‹</button>
+      <b>${sel === ws.length - 1 ? 'Diese Woche' : sel === ws.length - 2 ? 'Letzte Woche' : 'Woche'} · ${weekName(x.w)}</b>
+      <button data-act="wSel" data-i="${Math.min(ws.length - 1, sel + 1)}" ${sel < ws.length - 1 ? '' : 'disabled'}>›</button>
+    </div>
+    <div class="stats wkStats">
+      ${tile('Wetten', `<b>${x.n}</b>`, delta(x.n, A.n, '', 0))}
+      ${tile('Eingesetzt', `<b>CHF ${chf(x.stake)}</b>`, delta(x.stake, A.stake, 'CHF', 0))}
+      ${tile('Spieler gegen Bank', signed(x.net), delta(x.net, A.net, 'CHF'))}
+      ${tile('Trefferquote', `<b>${x.hit == null ? '–' : x.hit + ' %'}</b>`, delta(x.hit, A.hit, ' %'))}
+      ${tile('Ø Quote', `<b>${x.avgO == null ? '–' : q(x.avgO)}</b>`, delta(x.avgO, A.avgO, '', 0))}
+      ${tile('Aktive Spieler', `<b>${x.players}</b>`, delta(x.players, A.players, '', 0))}
+    </div>
+    <section class="panel"><h4 class="secHead">Plus und Minus pro Woche <small class="hint">alle Spieler zusammen · Woche antippen zum Auswählen</small></h4>
+      ${netChart(ws, A.net, sel)}
+      <div class="legend"><span><i class="lg up"></i>Plus (Spieler gewinnen)</span><span><i class="lg down"></i>Minus (Bank gewinnt)</span><span><i class="lg avg"></i>Wochenschnitt</span></div>
+    </section>
+    <div class="miniGrid">
+      <section class="panel"><h4 class="secHead">Wetten pro Woche</h4>${miniChart(ws, 'n', A.n, sel, { label: 'Wetten' })}<p class="miniFoot">Ø ${A.n ?? '–'} pro Woche</p></section>
+      <section class="panel"><h4 class="secHead">Trefferquote</h4>${miniChart(ws, 'hit', A.hit, sel, { label: 'Trefferquote', line: true, max: 100, fmt: (v) => v + ' %', tick: (t) => t + '%' })}<p class="miniFoot">Ø ${A.hit ?? '–'} % pro Woche</p></section>
+      <section class="panel"><h4 class="secHead">Ø Quote</h4>${miniChart(ws, 'avgO', A.avgO, sel, { label: 'Ø Quote', line: true, fmt: q, tick: (t) => r2(t) })}<p class="miniFoot">Ø ${A.avgO == null ? '–' : q(A.avgO)} pro Woche</p></section>
+    </div>
+    <div class="twoCol">
+      <section><h4 class="secHead">Rekorde der Woche</h4>
+        <div class="evGrid wkRec">
+          ${recCard('wBest', '🎯', 'Höchste Quote getroffen', x.best, odds)}
+          ${recCard('wLong', '💔', 'Höchste Quote verpasst', x.longMiss, odds)}
+          ${recCard('wLow', '🪨', 'Tiefste Quote verloren', x.low, odds)}
+          ${recCard('wBig', '💰', 'Grösster Gewinn', x.big, plus)}
+          ${recCard('wLoss', '💸', 'Grösster Verlust', x.loss, minus)}
+          <div class="evCard"><span class="evIcon">👑</span><div><small>Spieler der Woche</small>${x.top ? `<b>${esc(x.top.who)}</b>${signed(x.top.net)}` : '<b class="none">–</b>'}${x.flop ? `<small>🌧️ Pechvogel: ${esc(x.flop.who)} ${signed(x.flop.net)}</small>` : ''}</div></div>
+        </div></section>
+      <section><h4 class="secHead">Plus und Minus pro Wochentag</h4>
+        <div class="days wkDays">${x.days.map((d, i) => {
+          const h = Math.round(Math.abs(d.net) / dMax * 48);
+          return `<div class="day" data-tip="${days[i]}: ${d.n} Wetten${d.n ? ` · ${d.net > 0 ? '+' : ''}CHF ${chf(d.net)}` : ''}"><div class="dbar"><div class="hi"><i class="up" style="height:${d.net > 0 ? h : 0}px"></i></div><div class="lo"><i class="down" style="height:${d.net < 0 ? h : 0}px"></i></div></div>${d.n ? signed(d.net) : '<b class="none">–</b>'}<small>${days[i]}</small><small>${d.n ? d.n + (d.n === 1 ? ' Wette' : ' Wetten') : 'keine'}</small></div>`;
+        }).join('')}</div>
+        <div class="wkFacts">
+          <span>Kombi-Anteil <b>${x.kombi == null ? '–' : x.kombi + ' %'}</b></span>
+          <span>Gewonnen <b class="pos">${x.won}</b></span><span>Verloren <b class="neg">${x.lost}</b></span>
+          <span>Ausbezahlt <b>CHF ${chf(x.paid)}</b></span>
+        </div></section>
+    </div>
+    ${shown?.bet && P.wRec?.startsWith('w') ? `<div class="bets evBet">${betCard({ ...shown.bet, who: shown.who })}</div>` : ''}
+    <section class="panel"><h4 class="secHead">Tag für Tag <small class="hint">${weekName(x.w)}</small></h4>
+      <div class="tblWrap"><table class="trTbl wkTbl"><thead><tr><th>Tag</th><th>Wetten</th><th>Treffer</th><th>Eingesetzt</th><th>+/−</th><th class="c-best">Höchste Quote getroffen</th><th class="c-p">Spieler</th></tr></thead>
+        <tbody>${x.days.map((d, i) => {
+          const date = new Date(x.w + i * 864e5 + 12 * 36e5), today = date.toDateString() === new Date().toDateString();
+          return `<tr class="${d.n ? '' : 'dim'} ${today ? 'today' : ''}">
+          <td class="nm"><b>${date.toLocaleDateString('de-CH', { weekday: 'long' })}</b><small>${dmy(+date)}${today ? ' · heute' : ''}</small></td>
+          <td>${d.n || '–'}</td>
+          <td>${d.n ? `${Math.round(d.won / d.n * 100)} %<small><span class="pos">${d.won} ✓</span> <span class="neg">${d.lost} ✗</span></small>` : '–'}</td>
+          <td>${d.n ? 'CHF ' + chf(d.stake) : '–'}</td>
+          <td class="netCell">${d.n ? `${signed(d.net)}<i class="nbar ${d.net >= 0 ? 'up' : 'down'}" style="width:${Math.max(3, Math.abs(d.net) / dMax * 100)}%"></i>` : '–'}</td>
+          <td class="c-best">${d.best ? `<b>${q(d.best)}</b><small>${esc(d.bestWho)}</small>` : '–'}</td>
+          <td class="c-p">${d.players || '–'}</td></tr>`;
+        }).join('')}</tbody>
+        <tfoot><tr><td class="nm"><b>Woche</b></td><td>${x.n}</td><td>${x.n ? x.hit + ' %' : '–'}</td><td>CHF ${chf(x.stake)}</td><td>${signed(x.net)}</td><td class="c-best">${x.best ? `<b>${q(x.best.o)}</b>` : '–'}</td><td class="c-p">${x.players}</td></tr></tfoot></table></div>
+    </section>
+    <div class="twoCol">
+      <section class="panel"><h4 class="secHead">Nach Sportart <small class="hint">diese Woche</small></h4>${groupTbl(x.sports, (k) => Object.fromEntries(SPORTS)[k] || k, 'Sportart')}</section>
+      <section class="panel"><h4 class="secHead">Nach Liga <small class="hint">diese Woche · Gewinn eines Scheins auf seine Tipps verteilt</small></h4>${groupTbl(x.leagues, (k) => lgBy?.get(k)?.name || k, 'Liga', true)}</section>
+    </div>
+    <h4 class="secHead">Rekorde aller ${ws.length} Wochen</h4>
+    <div class="evGrid">
+      ${recCard('aBest', '🎯', 'Höchste Quote getroffen', R.best, odds)}
+      ${recCard('aLow', '🪨', 'Tiefste Quote verloren', R.low, odds)}
+      ${recCard('aBig', '💰', 'Grösster Gewinn', R.big, plus)}
+      ${recCard('aLoss', '💸', 'Grösster Verlust', R.loss, minus)}
+      <div class="evCard"><span class="evIcon">📈</span><div><small>Beste Woche</small>${R.bestWeek ? `<b>${weekName(R.bestWeek.w)}</b>${signed(R.bestWeek.net)}` : '<b class="none">–</b>'}</div></div>
+      <div class="evCard"><span class="evIcon">📉</span><div><small>Schlechteste Woche</small>${R.worstWeek ? `<b>${weekName(R.worstWeek.w)}</b>${signed(R.worstWeek.net)}` : '<b class="none">–</b>'}</div></div>
+    </div>
+    ${shown?.bet && P.wRec?.startsWith('a') ? `<div class="bets evBet">${betCard({ ...shown.bet, who: shown.who })}</div>` : ''}
+    <section class="panel"><h4 class="secHead">Quoten-Check <small class="hint">wie oft Scheine je nach Quote aufgehen, gegen das, was die Quote verspricht (1 ÷ Quote)</small></h4>
+      <div class="legend"><span><i class="lg hitL"></i>Getroffen</span><span><i class="lg expL"></i>Erwartet laut Quote</span></div>
+      <div class="buckets">${bk.map((k) => `<div class="bk" data-tip="Quote ${k.k}: ${k.n} Scheine\nGetroffen ${k.hit ?? '–'} % · erwartet ${k.exp ?? '–'} %\n${k.n ? `${k.net > 0 ? '+' : ''}CHF ${chf(k.net)}` : ''}">
+        <span class="bkName">${k.k}<small>${k.n} Scheine</small></span>
+        <span class="bkTrack">${k.n ? `<i class="bkBar" style="width:${k.hit / bMax * 100}%"></i><i class="bkExp" style="left:${k.exp / bMax * 100}%"></i>` : ''}</span>
+        <span class="bkVal">${k.n ? `<b>${k.hit} %</b><small>erwartet ${k.exp} %</small>` : '<b class="none">–</b>'}</span>
+        <span class="bkNet">${k.n ? signed(k.net) : ''}</span>
+      </div>`).join('')}</div>
+    </section>
+    <section class="panel"><h4 class="secHead">Spieler pro Woche <small class="hint">Plus und Minus jedes Spielers, Σ = alle ${ws.length} Wochen</small></h4>
+      ${mx.length ? `<div class="tblWrap"><table class="heat"><thead><tr><th>Spieler</th>${ws.map((w, i) => `<th class="${i === sel ? 'on' : ''}" data-act="wSel" data-i="${i}">KW ${kw(w.w)}</th>`).join('')}<th>Σ</th></tr></thead>
+        <tbody>${mx.map((r) => `<tr><td class="nm">${esc(r.who)}</td>${r.cells.map((v, i) => `<td class="${i === sel ? 'on' : ''}" style="${heat(v)}" data-tip="${esc(r.who)} · KW ${kw(ws[i].w)}: ${v == null ? 'keine Wetten' : `${v > 0 ? '+' : ''}CHF ${chf(v)}`}">${v == null ? '' : `${v > 0 ? '+' : v < 0 ? '−' : ''}${kfmt(Math.abs(v))}`}</td>`).join('')}<td class="sum">${signed(r.sum)}</td></tr>`).join('')}</tbody></table></div>` : '<p class="empty">Noch keine abgerechneten Wetten.</p>'}
+    </section>`;
+}
+
+// Tooltip für Grafiken: jedes Element mit data-tip
+(() => {
+  const tip = document.createElement('div'); tip.id = 'tip'; document.body.appendChild(tip);
+  document.addEventListener('pointermove', (e) => {
+    const t = e.target.closest?.('[data-tip]');
+    if (!t) { tip.style.display = 'none'; return; }
+    tip.textContent = t.getAttribute('data-tip'); tip.style.display = 'block';
+    const w = tip.offsetWidth, h = tip.offsetHeight;
+    tip.style.left = Math.min(innerWidth - w - 8, Math.max(8, e.clientX - w / 2)) + 'px';
+    tip.style.top = (e.clientY - h - 14 < 8 ? e.clientY + 18 : e.clientY - h - 14) + 'px';
+  });
+  document.addEventListener('scroll', () => { tip.style.display = 'none'; }, true);
+})();
 
 function renderMine() {
   const open = S.bets.filter((b) => b.status === 'open');
@@ -886,7 +1094,7 @@ function render() {
   renderTop();
   renderSide();
   document.body.classList.toggle('noSide', V.tab !== 'wetten');
-  if (V.tab === 'wetten') renderList(); else if (V.tab === 'stats') renderStats(); else if (V.tab === 'spieler') renderPlayers(); else if (V.tab === 'trends') renderTrends(); else renderMine();
+  if (V.tab === 'wetten') renderList(); else if (V.tab === 'stats') renderStats(); else if (V.tab === 'spieler') renderPlayers(); else if (V.tab === 'trends') renderTrends(); else if (V.tab === 'wochen') renderWeeks(); else renderMine();
   renderSlip();
 }
 
@@ -906,9 +1114,11 @@ document.addEventListener('click', (ev) => {
   const a = b.dataset.act;
   if (a === 'pick') return togglePick(b.dataset.k);
   if (a === 'tSort') { P.tSort[b.dataset.id] = b.dataset.k; renderTrends(); return; }
-  if (a === 'tAll') { P.tAll[b.dataset.id] = !P.tAll[b.dataset.id]; renderTrends(); return; }
+  if (a === 'tAll') { P.tAll[b.dataset.id] = !P.tAll[b.dataset.id]; if (b.dataset.r === 'weeks') renderWeeks(); else renderTrends(); return; }
   if (a === 'evShow') { const i = +b.dataset.i; P.evSel = P.evSel === i ? null : i; renderTrends(); return; }
-  if (a === 'tab') { V.tab = b.dataset.tab; if (V.tab === 'spieler') { P.sel = null; loadPlayers(true); } if (V.tab === 'trends') { P.evSel = null; loadPlayers(true); } }
+  if (a === 'wSel') { P.wSel = +b.dataset.i; P.wRec = P.wRec?.startsWith('w') ? null : P.wRec; renderWeeks(); return; }
+  if (a === 'wRec') { P.wRec = P.wRec === b.dataset.id ? null : b.dataset.id; renderWeeks(); return; }
+  if (a === 'tab') { V.tab = b.dataset.tab; if (V.tab === 'spieler') { P.sel = null; loadPlayers(true); } if (V.tab === 'trends') { P.evSel = null; loadPlayers(true); } if (V.tab === 'wochen') { P.wSel = null; P.wRec = null; loadPlayers(true); } }
   else if (a === 'pl') return void loadPlayer(b.dataset.n);
   else if (a === 'plBack') { P.sel = null; P.detail = null; }
   else if (a === 'sport') { V.sport = b.dataset.s; V.lg = 'all'; }
