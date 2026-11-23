@@ -12,6 +12,8 @@ copy /y accounts.mjs upload\ >nul
 copy /y package.json upload\ >nul
 copy /y clauder.json upload\ >nul
 copy /y u19.json upload\ >nul
+copy /y u21.json upload\ >nul
+copy /y u19logos.json upload\ >nul
 xcopy /e /i /y /q public upload\public >nul
 xcopy /e /i /y /q seed upload\seed >nul
 echo Fertig. Im Ordner "upload" liegt alles fuer GitHub.

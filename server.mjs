@@ -517,7 +517,41 @@ const zDay = (t) => new Date(t).toLocaleDateString('sv-SE', { timeZone: 'Europe/
 // true = spielt am selben Tag, false = spielt an einem anderen Tag in den 3 Tagen davor/danach,
 // 0 = hat in diesen Tagen kein Spiel (z. B. Winterpause), null = unbekannt (U21 nirgends gefunden / zu weit weg)
 const u21Re = (club) => U21[club] && new RegExp(`^(neuchatel )?${U21[club]}( sport)? (ii|u21|u 21)$`);
+// 1. Liga Classic: Flashscore kennt sie nicht, darum ganzer Spielplan in u21.json (vom Nutzer eingefügt).
+// Für diese Klubs ist der Plan vollständig: Spiel am selben Tag = true, anderer Tag = false, sonst 0.
+const U21L = { Winterthur: 'FC Winterthur U-21', 'St. Gallen': 'FC St. Gallen 1879 U-21', Thun: 'FC Thun Berner Oberland U-21', GC: 'Grasshopper Club Zürich U-21', Servette: 'Servette FC M-21', Sion: 'FC Sion M-21', Lausanne: 'FC Lausanne-Sport M-21' };
+let u21Liga = { games: [] }, u21Mt = 0;
+function u21Load() {
+  try { const f = path.join(DIR, 'u21.json'), mt = fs.statSync(f).mtimeMs; if (mt !== u21Mt) { u21Liga = JSON.parse(fs.readFileSync(f, 'utf8')); u21Mt = mt; } } catch {}
+  return u21Liga.games || [];
+}
+// Spiele der U21 (mit Gegner) und Tabelle der Gruppe bis heute
+function u21Liga1(club) {
+  const team = U21L[club];
+  if (!team) return null;
+  const all = u21Load(), mine = all.filter((g) => g.h === team || g.a === team);
+  if (!mine.length) return null;
+  const grp = mine[0].grp, T = new Map();
+  for (const g of all) {
+    if (g.grp !== grp || !Number.isFinite(g.hs)) continue;
+    for (const [n, f, a] of [[g.h, g.hs, g.as], [g.a, g.as, g.hs]]) {
+      const x = T.get(n) || { n, p: 0, sp: 0, gf: 0, ga: 0 };
+      x.sp++; x.gf += f; x.ga += a; x.p += f > a ? 3 : f === a ? 1 : 0; T.set(n, x);
+    }
+  }
+  const tab = [...T.values()].sort((a, b) => b.p - a.p || (b.gf - b.ga) - (a.gf - a.ga) || b.gf - a.gf);
+  const rk = tab.findIndex((x) => x.n === team) + 1, me = tab[rk - 1];
+  const form = mine.filter((g) => Number.isFinite(g.hs)).slice(-5).map((g) => { const f = g.h === team ? g.hs : g.as, a = g.h === team ? g.as : g.hs; return f > a ? 'S' : f < a ? 'N' : 'U'; }).join('');
+  return { team, grp, mine, rk, me, n: tab.length, form };
+}
 function u21Same(club, start) {
+  const L = u21Liga1(club);
+  if (L) {
+    const day = zDay(start);
+    if (start > Date.parse(L.mine[L.mine.length - 1].d) + 7 * DAY) return null; // nach Saisonende unbekannt
+    if (L.mine.some((g) => g.d === day)) return true;
+    return L.mine.some((g) => Math.abs(Date.parse(g.d + 'T12:00:00Z') - start) <= 3.5 * DAY) ? false : 0;
+  }
   const re = u21Re(club);
   if (!re) return null;
   let other = false, known = false;
@@ -535,9 +569,12 @@ function u21Same(club, start) {
 }
 // Logo der ersten Mannschaft (sonst der U21) für das U19-Team; einmal gefunden, gemerkt
 const u19Logo = new Map();
+// Rückfall, falls die ersten Mannschaften gerade nicht im Spielplan stehen (Neustart, Winterpause)
+let u19LogoFix = {};
+try { u19LogoFix = JSON.parse(fs.readFileSync(path.join(DIR, 'u19logos.json'), 'utf8')); } catch {}
 function logoOf(club) {
   if (u19Logo.get(club)) return u19Logo.get(club);
-  if (!U21[club]) return '';
+  if (!U21[club]) return u19LogoFix[club] || '';
   const first = new RegExp(`^(neuchatel )?${U21[club]}( sport)?$`), second = u21Re(club);
   let alt = '';
   for (const e of store.values()) {
@@ -550,7 +587,7 @@ function logoOf(club) {
     }
   }
   if (alt) u19Logo.set(club, alt);
-  return alt;
+  return alt || u19LogoFix[club] || '';
 }
 // Tabelle und Form: Punkte pro Spiel gesamt, zu Hause bzw. auswärts, letzte 5 Spiele
 function u19Table(games) {
@@ -702,6 +739,12 @@ function u19Report(g, T, rank, st, players, lam, w, hS, aS, h2h) {
     if (hot && hot[1] >= 2) t.push(`Zuletzt auffällig: ${hot[0]} mit ${hot[1]} Toren in den letzten fünf Spielen.`);
     const bad = Object.entries(s.cards).sort((a, b) => b[1] - a[1])[0];
     t.push(`Karten: ${(s.y / s.n).toFixed(1)} Gelbe pro Spiel${s.red ? `, ${s.red}-mal Rot oder Gelb-Rot` : ', noch kein Platzverweis'}${bad && bad[1] >= 3 ? `; am häufigsten verwarnt wurde ${bad[0]} (${bad[1]})` : ''}.`);
+    const L = u21Liga1(name);
+    if (L && L.me) {
+      const day = zDay(g.ts), same = L.mine.find((y) => y.d === day);
+      const opp = same && (same.h === L.team ? `zu Hause gegen ${same.a}` : `auswärts bei ${same.h}`);
+      t.push(`Die U21 spielt in der 1. Liga (Gruppe ${L.grp}) und ist dort ${L.rk}. von ${L.n} mit ${L.me.p} Punkten aus ${L.me.sp} Spielen${L.form ? `, zuletzt ${L.form.split('').join('-')}` : ''}.${opp ? ` Am gleichen Tag spielt sie ${same.t ? `um ${same.t} ` : ''}${opp}.` : ''}`);
+    }
     t.push(u21 === true ? `Die U21 von ${name} spielt am selben Tag. Dann fehlen der U19 oft Spieler, die oben aushelfen.` : u21 === false ? `Die U21 spielt an einem anderen Tag, die U19 dürfte also ihre besten Spieler zur Verfügung haben.` : u21 === 0 ? `Die U21 hat in diesen Tagen kein Spiel, die U19 kann voll besetzt antreten.` : `Ob die U21 am selben Tag spielt, ist noch nicht bekannt.`);
     P.push({ h: name, t: t.join(' ') });
   };
@@ -1463,6 +1506,7 @@ tsStart({ upsert, dataDir: DATA, log: (m) => console.log(m) });
   await loadRankings().catch(() => {});
   await probeLeagues();
   await guarded(fullSweep);
+  u19Sweep(); // jetzt sind die Super-League-Spiele da: Wappen und U21-Hinweise für U19 sofort nachziehen
   await fdSweep().catch((e) => console.log('football-data fehlgeschlagen:', e.message));
   setInterval(() => fdSweep().catch(() => {}), 30 * 60e3);
   console.log(`Erster Abruf fertig: ${store.size} Spiele`);
