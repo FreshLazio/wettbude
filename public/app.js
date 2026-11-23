@@ -1,9 +1,9 @@
-import { evalLeg, evalLegEarly, earlyText, settleBet, betOdds, scoreText, insured, INS, nRows, boostPct, BOOST, MAX_WIN, capWin } from './settle.js';
+import { evalLeg, evalLegEarly, earlyText, settleBet, betOdds, scoreText, insured, INS, nRows, boostPct, BOOST, MAX_WIN, capWin, PSTAT, playAt } from './settle.js';
 import { combinable, groupOdds } from './builder.js';
 
 const LS = 'wettbude.v1', START = 500, MIN = 0.5;
 const KOMBI_MAX = 20, SYS_MAX = 10; // wie bei Interwetten höchstens 20 Tipps pro Kombi
-const SPORTS = [['fussball', 'Fussball'], ['tennis', 'Tennis'], ['eishockey', 'Eishockey'], ['basketball', 'Basketball'], ['amfootball', 'American Football'], ['rugby', 'Rugby'], ['darts', 'Darts'], ['ski', 'Ski alpin']];
+const SPORTS = [['fussball', 'Fussball'], ['u19', 'U19 Fussball'], ['tennis', 'Tennis'], ['eishockey', 'Eishockey'], ['basketball', 'Basketball'], ['amfootball', 'American Football'], ['rugby', 'Rugby'], ['darts', 'Darts'], ['ski', 'Ski alpin']];
 const POINTS = new Set(['basketball', 'amfootball', 'rugby']);
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -79,6 +79,7 @@ const athName = (e, p) => (e.al || []).find((a) => a.id === p)?.n || p;
 
 function pickLabel(e, m, p, line) {
   if (e.race) return `${athName(e, p)} ${{ sw: 'gewinnt', sp: 'auf dem Podest', s10: 'in den Top 10' }[m] || ''}`.trim();
+  if (m.startsWith('pp|')) { const [, st, n] = m.split('|'); return `${n} ${p === 'O' ? 'über' : 'unter'} ${line} ${PSTAT[st] || st}`; }
   const H = e.home.n, A = e.away.n;
   const team = p === '1' ? H : p === '2' ? A : 'Unentschieden';
   const ou = (p === 'O' ? 'über ' : 'unter ') + line;
@@ -99,7 +100,41 @@ function pickLabel(e, m, p, line) {
   return p;
 }
 
+// Kleines Fenster: Systemwette mit den eigenen Tipps erklärt (Reihen, was bei wie vielen richtigen ausbezahlt wird)
+function sysInfo() {
+  const t = totals();
+  if (!t.sys) return;
+  const n = t.items.length, k = t.sys, o = t.items.map((i) => i.sel?.o || 1);
+  const L = 'ABCDEFGHIJ';
+  const combos = (arr, r, start = 0, cur = [], out = []) => { if (cur.length === r) { out.push(cur.slice()); return out; } for (let i = start; i < arr.length; i++) { cur.push(arr[i]); combos(arr, r, i + 1, cur, out); cur.pop(); } return out; };
+  const idx = [...Array(n).keys()], rows = combos(idx, k);
+  // Auszahlung, wenn genau c Tipps stimmen: je nachdem welche falsch sind, zwischen min und max
+  const pay = (c) => {
+    const vals = combos(idx, n - c).map((wrong) => capWin(t.total * betOdds({ sys: k, legs: o.map((v, j) => ({ o: v, res: wrong.includes(j) ? 'lost' : 'won' })) }, true)));
+    return [Math.min(...vals), Math.max(...vals)];
+  };
+  const money = ([lo, hi]) => (hi - lo > 0.01 ? `${chf(lo)} – ${chf(hi)}` : chf(lo));
+  const res = (x) => { const d = x - t.total; return `<b class="${d >= 0 ? 'pos' : 'neg'}">${d >= 0 ? '+' : '−'}${chf(Math.abs(d))}</b>`; };
+  const nCk = (a, b) => (b > a ? 0 : nRows(a, b));
+  let h = `<div class="sysBox" role="dialog" aria-label="Systemwette erklärt"><button class="x" data-sx="1" title="Schliessen">×</button>
+    <h3>System ${k} aus ${n}</h3>
+    <p>Aus deinen ${n} Tipps werden <b>alle möglichen Kombis mit ${k} Tipps</b> gebildet. Das sind <b>${rows.length} Reihen</b>, jede mit CHF ${chf(t.stake)} Einsatz (total CHF ${chf(t.total)}).</p>
+    <p>Eine Reihe gewinnt nur, wenn <b>alle ${k} Tipps darin</b> stimmen. Sie zahlt dann Einsatz × ihre Quote. Ausbezahlt wird die Summe aller gewonnenen Reihen. Darum darf hier auch etwas falsch sein.</p>
+    <div class="sysLeg">${t.items.map((i, j) => `<div><i>${L[j]}</i><span>${i.e ? esc(pickLabel(i.e, i.m, i.p, i.line)) : 'Tipp'}</span><b>${q(o[j])}</b></div>`).join('')}</div>
+    <h4>Deine Reihen</h4><div class="sysRows">${rows.slice(0, 12).map((r) => { const x = r.reduce((p, j) => p * o[j], 1); return `<div><span>${r.map((j) => L[j]).join(' + ')}</span><span>Quote ${q(x)}</span><b>CHF ${chf(t.stake * x)}</b></div>`; }).join('')}${rows.length > 12 ? `<p class="hint">… und ${rows.length - 12} weitere Reihen</p>` : ''}</div>
+    <h4>Was du bekommst</h4><table class="sysTbl"><tr><th>Richtig</th><th>Reihen gewonnen</th><th>Auszahlung CHF</th><th>Plus/Minus</th></tr>`;
+  for (let c = n; c >= Math.max(0, k - 1); c--) {
+    const won = nCk(c, k), p = won ? pay(c) : [0, 0];
+    h += `<tr class="${won ? '' : 'lost'}"><td>${c} von ${n}</td><td>${won} von ${rows.length}</td><td>${won ? money(p) : '0.00'}</td><td>${won ? res(p[0]) + (p[1] - p[0] > 0.01 ? ` bis ${res(p[1])}` : '') : res(0)}</td></tr>`;
+  }
+  h += `</table><p class="hint">Weniger als ${k} richtig: alles verloren. Wenn die Auszahlung eine Spanne ist, hängt sie davon ab, <i>welche</i> Tipps falsch sind (ein falscher Tipp mit hoher Quote kostet mehr). Wird ein Spiel nicht gewertet (Geld zurück), zählt es mit Quote 1.00.</p></div>`;
+  let ov = $('#sysInfo');
+  if (!ov) { ov = document.createElement('div'); ov.id = 'sysInfo'; document.body.append(ov); ov.addEventListener('click', (ev) => { if (ev.target === ov || ev.target.dataset.sx) ov.hidden = true; }); }
+  ov.innerHTML = h; ov.hidden = false;
+}
+
 function mName(m, sp) {
+  if (m.startsWith('pp|')) return 'Spielerwette ' + (PSTAT[m.split('|')[1]] || '');
   if (m.startsWith('h1ou')) return '1. Halbzeit Über/Unter';
   if (m.startsWith('ou')) return 'Über/Unter';
   if (m.startsWith('th') || m.startsWith('ta')) return 'Tore pro Team';
@@ -169,7 +204,7 @@ function settle() {
     changed = true;
     if (out.status === 'won') toast(`Gewonnen: + CHF ${chf(out.payout)}`, 'won');
     else if (out.ins) toast(`Nur ein Spiel falsch: Kombi-Versicherung zahlt CHF ${chf(out.payout)} zurück`);
-    else if (out.status === 'void') toast(`Wette ungültig, Einsatz zurück: CHF ${chf(out.payout)}`);
+    else if (out.status === 'void') toast(`Geld zurück: CHF ${chf(out.payout)}`);
     else toast(`Verloren: Einsatz CHF ${chf(b.stake)}`, 'lost');
   }
   if (changed) save();
@@ -308,14 +343,17 @@ const mainOf = (e) => (e.sport === 'fussball' || (e.sport === 'eishockey' && (e.
 function raceRow(e) {
   const soon = e.start - Date.now() < 60 * 6e4;
   const fav = (e.al || []).filter((a) => e.m?.sw?.[a.id]).sort((a, b) => e.m.sw[a.id].o - e.m.sw[b.id].o).slice(0, 3);
-  let h = `<div class="ev race">
+  const real = e.book && e.book !== 'Modell';
+  const src = e.wait ? 'Quoten folgen, spätestens 24 Stunden vor dem Rennen' : real ? e.book : 'Modellquote';
+  let h = `<div class="ev race${e.wait ? ' wait' : ''}">
     <div class="when">${soon ? `<b class="cd" data-cd="${e.start}">${countdown(e.start)}</b>bis Start` : `<b>${timeLabel(e.start)}</b>${dayLabel(e.start)}`}</div>
-    <div class="teams"><div><span>⛷️ ${esc(e.home.n)}</span></div><div class="sub">${esc([e.away.n, e.tour, `${(e.al || []).length} Fahrer`, 'Modellquote'].filter(Boolean).join(' · '))}</div></div>
+    <div class="teams"><div><span>⛷️ ${esc(e.home.n)}</span></div><div class="sub">${esc([e.away.n, e.tour, `${(e.al || []).length} Fahrer`, src].filter(Boolean).join(' · '))}</div></div>
     <div class="odds">${fav.map((a) => oddBtn(e, 'sw', a.id, a.n.replace(/\s+\S+\.$/, ''))).join('')}</div>
-    <button class="more" data-act="more" data-id="${esc(e.id)}">${V.open.has(e.id) ? '–' : 'Alle'}</button>
+    ${e.wait ? '' : `<button class="more" data-act="more" data-id="${esc(e.id)}">${V.open.has(e.id) ? '–' : 'Alle'}</button>`}
   </div>`;
-  if (V.open.has(e.id)) {
-    h += `<div class="extra"><div class="mk"><h5>Sieger · Podest (Top 3) · Top 10 <i>Modellquote aus der Weltcup-Reihenfolge, mit Ausfällen</i></h5>
+  if (V.open.has(e.id) && !e.wait) {
+    const lbl = (k) => e.m?.[k] && Object.values(e.m[k])[0]?.b === 'Modell' ? ' (Modell)' : '';
+    h += `<div class="extra"><div class="mk"><h5>Sieger${lbl('sw')} · Podest (Top 3)${lbl('sp')} · Top 10${lbl('s10')} <i>${real ? `Quoten von ${esc(e.book)}, fehlende Märkte aus dem Modell` : 'Modellquote aus der Weltcup-Reihenfolge, mit Ausfällen'}</i></h5>
       <div class="raceTbl"><div class="rh"><span>Fahrer</span><span>Sieg</span><span>Podest</span><span>Top 10</span></div>
       ${(e.al || []).map((a) => `<div class="rr"><span class="rn"><b>${esc(a.n)}</b><small>${esc(a.c)}</small></span>${oddBtn(e, 'sw', a.id, '')}${oddBtn(e, 'sp', a.id, '')}${oddBtn(e, 's10', a.id, '')}</div>`).join('')}
       </div><p class="hint">Nicht gestartet = Einsatz zurück. Ausgeschieden oder disqualifiziert = verloren. Mehrere Fahrer aus demselben Rennen gehen als Einzelwetten.</p></div></div>`;
@@ -323,6 +361,10 @@ function raceRow(e) {
   return h;
 }
 
+// U19 hat eine eigene Liste, bleibt aber Fussball (Märkte, Abrechnung)
+function spOf(x) { return (x.lg || x.slug) === 'sui.u19' ? 'u19' : x.sport; }
+// U21 am selben Tag = Spieler fehlen, an einem anderen Tag = volle U19
+const u21Txt = (e) => (e.u21 || []).map((x, i) => (x == null ? '' : `U21 ${(i ? e.away : e.home).n.replace(/ U19$/, '')} ${x ? 'spielt am selben Tag ↓' : 'spielt an einem anderen Tag ↑'}`)).filter(Boolean).join(' · ');
 function evRow(e) {
   if (e.race) return raceRow(e);
   const main = mainOf(e);
@@ -332,7 +374,7 @@ function evRow(e) {
   const book = e.wait ? 'Quoten folgen, spätestens 24 Stunden vor dem Spiel' : e.book === 'Modell' ? 'Modellquote' : e.sport === 'eishockey' && e.m?.['1x2']?.['1']?.b === 'berechnet' ? `${e.book}, Unentschieden berechnet` : e.book;
   let h = `<div class="ev${e.wait ? ' wait' : ''}">
     <div class="when">${soon ? `<b class="cd" data-cd="${e.start}">${countdown(e.start)}</b>bis Anpfiff` : `<b>${timeLabel(e.start)}</b>${dayLabel(e.start)}`}</div>
-    <div class="teams"><div>${img(e.home)}<span>${esc(e.home.n)}</span>${star(e.home)}</div><div>${img(e.away)}<span>${esc(e.away.n)}</span>${star(e.away)}</div><div class="sub">${esc([V.q ? lgBy.get(e.lg)?.name : '', e.tour, book].filter(Boolean).join(' · '))}</div></div>
+    <div class="teams"><div>${img(e.home)}<span>${esc(e.home.n)}</span>${star(e.home)}</div><div>${img(e.away)}<span>${esc(e.away.n)}</span>${star(e.away)}</div><div class="sub">${esc([V.q ? lgBy.get(e.lg)?.name : '', e.tour, book, u21Txt(e)].filter(Boolean).join(' · '))}</div></div>
     <div class="odds">${main === '1x2' ? oddBtn(e, main, '1', '1') + oddBtn(e, main, 'X', 'X') + oddBtn(e, main, '2', '2') : oddBtn(e, main, '1', '1') + oddBtn(e, main, '2', '2')}</div>
     ${extras ? `<button class="more" data-act="more" data-id="${esc(e.id)}">${V.open.has(e.id) ? '–' : '+' + extras}</button>` : '<span></span>'}
   </div>`;
@@ -385,6 +427,15 @@ function extraHtml(e) {
   }
   mk('gsa', null, 'Torschütze (trifft irgendwann)');
   mk('gsf');
+  // NBA-Spielerwetten: pro Statistik eine Tabelle, Spieler mit der höchsten Linie (Stars) zuerst
+  for (const [st, label] of Object.entries(PSTAT)) {
+    const keys = Object.keys(M).filter((k) => k.startsWith(`pp|${st}|`)).sort((a, b) => M[b].line - M[a].line);
+    if (!keys.length) continue;
+    const big = V.pAll?.has(e.id + st), list = big ? keys : keys.slice(0, 8);
+    h += `<div class="mk"><h5>Spieler: ${label} <i>${esc(M[keys[0]].O.b)} · inkl. Verlängerung · nicht gespielt = Einsatz zurück</i></h5>
+      <div class="propTbl">${list.map((k) => `<div class="pr"><span class="pn">${esc(k.split('|')[2])}</span><span class="pl">${M[k].line}</span>${oddBtn(e, k, 'O', 'Über')}${oddBtn(e, k, 'U', 'Unter')}</div>`).join('')}</div>
+      ${keys.length > 8 ? `<button class="tAll" data-act="pAll" data-k="${esc(e.id + st)}">${big ? 'Weniger' : `Alle ${keys.length} Spieler`}</button>` : ''}</div>`;
+  }
   const books = Object.entries(e.cmp || {});
   if (books.length > 1) {
     const ps = books.some(([, w]) => w.X) ? ['1', 'X', '2'] : ['1', '2'];
@@ -397,7 +448,7 @@ function extraHtml(e) {
 // Nur Spiele vor dem Anpfiff: was läuft, ist gesperrt und nur noch unter «Meine Wetten» zu sehen.
 const bettable = (e, now = Date.now()) => !e.void && !e.done && e.state === 'pre' && e.start > now && (e.wait || (e.m && Object.keys(e.m).length));
 function visible() {
-  return D.events.filter((e) => e.sport === V.sport && bettable(e));
+  return D.events.filter((e) => spOf(e) === V.sport && bettable(e));
 }
 
 // Suche über alle Sportarten: Teams, Liga oder Land.
@@ -418,7 +469,7 @@ function renderSide() {
   const evs = visible();
   const count = new Map();
   for (const e of evs) count.set(e.lg, (count.get(e.lg) || 0) + 1);
-  const lgs = D.leagues.filter((l) => l.sport === V.sport && count.get(l.slug));
+  const lgs = D.leagues.filter((l) => spOf(l) === V.sport && count.get(l.slug));
   if (V.lg !== 'all' && V.lg !== 'fav' && !count.get(V.lg)) V.lg = 'all';
   const favN = evs.filter(isFav).length;
   const lgBtn = (l, withLand) => `<button data-act="lg" data-l="${esc(l.slug)}" class="${V.lg === l.slug ? 'on' : ''}"><span class="lstar ${isFavL(l.slug) ? 'on' : ''}" data-act="favL" data-l="${esc(l.slug)}" title="${isFavL(l.slug) ? 'Aus den Lieblingsligen entfernen' : 'Als Lieblingsliga oben anzeigen'}">${isFavL(l.slug) ? '★' : '☆'}</span>${esc(withLand ? `${l.name} (${l.land})` : l.name)}<i>${count.get(l.slug)}</i></button>`;
@@ -459,6 +510,7 @@ function renderList() {
     n += list.length;
     h += `<div class="lgHead"><h3><span class="lstar ${isFavL(slug) ? 'on' : ''}" data-act="favL" data-l="${esc(slug)}">${isFavL(slug) ? '★' : '☆'}</span>${esc(l?.name || slug)}</h3><span>${esc(l?.land || '')}</span></div><div class="list">${list.map(evRow).join('')}</div>`;
   }
+  if (V.sport === 'u19' && !searching) h += '<p class="note">U19 Elite: kein Wettanbieter hat Quoten, darum immer Modellquoten aus allen Resultaten der Saison (Gegnerstärke, letzte Spiele zählen mehr). Spielt die U21 des Klubs am selben Tag (↓), fehlen der U19 meist Spieler, die hochgezogen werden: das Modell macht sie schwächer. Spielt die U21 an einem anderen Tag (↑), ist die U19 komplett und etwas stärker. Abgerechnet nach 90 Minuten; wird ein Spiel verschoben, gibt es das Geld zurück.</p>';
   h += '<p class="note">Quoten von Flashscore. Pro Spiel stammen alle Quoten von einem Anbieter: bet365, sonst Interwetten, sonst der nächste. Hat er einen Markt nicht, springt der nächste ein. Weitere Tormärkte sind aus seiner Linie berechnet und so beschriftet. Eishockey: 1X2, Tore und Handicap gelten nach 60 Minuten. «Modellquote» gibt es nur, wenn 24 Stunden vor dem Spiel kein Anbieter Quoten hat; sie ist aus allen Resultaten der Saison berechnet (Gegnerstärke, letzte Spiele zählen mehr). Wetten sind bis zum Anpfiff möglich. Spielgeld, kein echter Einsatz.</p>';
   $('#main').innerHTML = h;
 }
@@ -479,7 +531,7 @@ const betName = (b) => (b.sys ? `System ${b.sys} aus ${b.legs.length}` : b.legs.
 // adminOf: Name des Spielers, wenn der Admin den Schein annullieren darf (Spieler-Ansicht)
 function betCard(b, adminOf) {
   const odds = betOdds(b);
-  const label0 = { open: 'Offen', won: 'Gewonnen', lost: 'Verloren', void: 'Ungültig' }[b.status];
+  const label0 = { open: 'Offen', won: 'Gewonnen', lost: 'Verloren', void: 'Geld zurück' }[b.status];
   // Offene Kombi: wie viele Tipps schon richtig sind
   const ok = b.legs.filter((l) => l.res === 'won').length;
   const prog = (b.status === 'open' && b.legs.length > 1 && ok ? `<small class="prog">${ok} von ${b.legs.length} richtig</small>` : '')
@@ -490,7 +542,7 @@ function betCard(b, adminOf) {
   const legs = b.legs.slice().sort((x, y) => (x.start || 0) - (y.start || 0));
   return `<div class="bet ${b.who ? 'st-' + b.status : ''}">
     <div class="betHead"><div>${b.who ? `<b class="who">${esc(b.who)}</b>` : ''}<b>${betName(b)}</b><small>${new Date(b.t).toLocaleString('de-CH', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</small>${prog}</div><span class="badge ${b.status}" ${b.pend ? 'title="Steht fest. Ausbezahlt wird, sobald der Spieler die Seite öffnet."' : ''}>${label}${b.pend && (b.status === 'won' || b.ins) ? ' · Auszahlung folgt' : ''}</span></div>
-    ${legs.map((l) => `<div class="leg ${l.res || ''}"><i class="dot ${l.res || ''}"></i><div><b>${esc(l.pick)}</b><small>${esc(l.mk)} · ${esc(l.match)}${l.lg ? ' · ' + esc(l.lg) : ''}</small><small>${l.res ? 'Resultat ' + esc(l.score) + (l.res === 'void' ? ' · ungültig, Quote 1.00' : '') : legState(l)}</small></div><span class="q">${q(l.o)}</span></div>`).join('')}
+    ${legs.map((l) => `<div class="leg ${l.res || ''}"><i class="dot ${l.res || ''}"></i><div><b>${esc(l.pick)}</b><small>${esc(l.mk)} · ${esc(l.match)}${l.lg ? ' · ' + esc(l.lg) : ''}</small><small>${l.res ? 'Resultat ' + esc(l.score) + (l.res === 'void' ? (b.legs.length > 1 ? ' · Geld zurück für diesen Tipp: zählt als Quote 1.00, der Rest des Scheins gilt weiter' : ' · Geld zurück: du bekommst den Einsatz wieder, weder Gewinn noch Verlust') : '') : legState(l)}</small></div><span class="q">${q(l.o)}</span></div>`).join('')}
     ${b.note ? `<p class="betNote">🤖 ${esc(b.note)}</p>` : ''}
     <div class="betFoot"><div><span>Einsatz${b.sys ? ` (${nRows(b.legs.length, b.sys)} Reihen à ${chf(b.stake / nRows(b.legs.length, b.sys))})` : ''}</span><b>CHF ${chf(b.stake)}</b></div><div><span>Gesamtquote</span><b>${q(odds)}</b></div><div><span>${b.status === 'open' ? 'Möglicher Gewinn' : 'Auszahlung'}</span><b class="${b.status === 'won' ? 'pos' : ''}">CHF ${chf(b.status === 'open' ? capWin(b.stake * odds) : b.payout)}</b>${(b.status === 'open' && b.stake * odds > MAX_WIN) || b.capped ? `<small class="cap">Höchstgewinn</small>` : ''}</div>${adminOf && typeof adminOf === 'string' ? `<button class="annul" data-act="annul" data-n="${esc(adminOf)}" data-id="${esc(b.id)}" data-t="${b.t}" title="Nur Admin: vertippten Schein löschen, Einsatz zurück">Löschen</button>` : ''}</div>
   </div>`;
@@ -498,7 +550,9 @@ function betCard(b, adminOf) {
 
 /* ---------- Andere Spieler: Rangliste und ihre Wetten der letzten 7 Tage ---------- */
 
-const P = { list: null, at: 0, sel: null, detail: null, err: '', tSort: {}, tAll: {} };
+const P = { list: null, at: 0, sel: null, detail: null, err: '', tSort: {}, tAll: {}, arch: false };
+// Archiv bleibt offen oder zu, auch wenn die Seite neu gezeichnet wird
+document.addEventListener('toggle', (e) => { if (e.target.classList?.contains('archiv')) P.arch = e.target.open; }, true);
 async function loadPlayers(force) {
   if (!S.tok || (!force && P.list && Date.now() - P.at < 60e3)) return;
   P.at = Date.now();
@@ -520,7 +574,7 @@ function dayBars(done) {
     days.push({ from: +d, to: +d + 864e5, label: i === 0 ? 'Heute' : i === 1 ? 'Gestern' : d.toLocaleDateString('de-CH', { weekday: 'short', day: '2-digit', month: '2-digit' }), net: 0, n: 0 });
   }
   for (const b of done) {
-    const t = b.done || b.t, day = days.find((x) => t >= x.from && t < x.to);
+    const t = playAt(b), day = days.find((x) => t >= x.from && t < x.to);
     if (day) { day.net += (b.payout || 0) - b.stake; day.n++; }
   }
   const max = Math.max(1, ...days.map((x) => Math.abs(x.net)));
@@ -536,6 +590,9 @@ function renderPlayers() {
     const d = P.detail;
     if (!d) { $('#main').innerHTML = `<button class="back" data-act="plBack">← Alle Spieler</button><p class="empty">${P.err ? esc(P.err) : 'Wird geladen …'}</p>`; return; }
     const open = d.bets.filter((b) => b.status === 'open'), done = d.bets.filter((b) => b.status !== 'open');
+    const t0 = Date.now();
+    const fresh = done.filter((b) => playAt(b) > t0 - 864e5), old = done.filter((b) => playAt(b) <= t0 - 864e5);
+    const week = done.filter((b) => playAt(b) > t0 - 7 * 864e5);
     $('#main').innerHTML = `<button class="back" data-act="plBack">← Alle Spieler</button>
       <div class="lgHead"><h3>${esc(d.name)}</h3><span>Start mit CHF ${chf(d.start)}</span>${P.admin ? `<button class="gift" data-act="gift" data-n="${esc(d.name)}">Geld geben</button>` : ''}${P.admin && d.base && Math.abs(d.base - START) > 0.01 ? `<button class="gift" data-act="rescale" data-n="${esc(d.name)}" data-b="${d.base}">Auf CHF ${START} Start umrechnen</button>` : ''}</div>
       <div class="stats">
@@ -546,10 +603,11 @@ function renderPlayers() {
         <div class="stat"><span>Konto zurückgesetzt</span><b class="${d.resets ? 'neg' : ''}">${d.resets || 0}×</b></div>
       </div>
       <h4 class="secHead">Plus und Minus pro Tag</h4>
-      ${dayBars(done)}
-      <h4 class="secHead">Abgerechnet in den letzten 7 Tagen (${done.length})</h4>
-      <div class="bets">${done.map((b) => betCard(b, P.admin && d.name)).join('') || '<p class="empty">Keine abgerechneten Wetten in den letzten 7 Tagen.</p>'}</div>
-      ${open.length ? `<h4 class="secHead">Noch offen (${open.length})</h4><div class="bets">${byKickoff(open).map((b) => betCard(b, P.admin && d.name)).join('')}</div>` : ''}`;
+      ${dayBars(week)}
+      ${open.length ? `<h4 class="secHead">Noch offen (${open.length})</h4><div class="bets">${byKickoff(open).map((b) => betCard(b, P.admin && d.name)).join('')}</div>` : ''}
+      <h4 class="secHead">Abgerechnet in den letzten 24 Stunden (${fresh.length})</h4>
+      <div class="bets">${fresh.map((b) => betCard(b, P.admin && d.name)).join('') || '<p class="empty">Keine abgerechneten Wetten in den letzten 24 Stunden.</p>'}</div>
+      ${old.length ? `<details class="archiv"${P.arch ? ' open' : ''}><summary>Archiv · ältere Wetten (${old.length})</summary><div class="bets">${old.map((b) => betCard(b, P.admin && d.name)).join('')}</div></details>` : ''}`;
     return;
   }
   if (!P.list) { $('#main').innerHTML = `<p class="empty">${P.err ? esc(P.err) : 'Spieler werden geladen …'}</p>`; return; }
@@ -847,7 +905,7 @@ function renderMine() {
   const done = S.bets.filter((b) => b.status !== 'open');
   const net = done.reduce((x, b) => x + b.payout - b.stake, 0);
   const broke = S.bal < MIN && !open.length;
-  const list = V.filter === 'open' ? byKickoff(open) : done.slice().sort((a, b) => (b.done || b.t) - (a.done || a.t));
+  const list = V.filter === 'open' ? byKickoff(open) : done.slice().sort((a, b) => playAt(b) - playAt(a));
   $('#main').innerHTML = `
     ${broke ? `<div class="banner"><span>Dein Guthaben ist aufgebraucht.</span><button data-act="reset" data-sure="1">Neu starten</button></div>` : ''}
     <div class="stats">
@@ -878,7 +936,7 @@ function lineChart(vals) {
 }
 
 function renderStats() {
-  const done = S.bets.filter((b) => b.status !== 'open').sort((a, b) => (a.done || a.t) - (b.done || b.t));
+  const done = S.bets.filter((b) => b.status !== 'open').sort((a, b) => playAt(a) - playAt(b));
   const open = S.bets.filter((b) => b.status === 'open');
   const net = (b) => b.payout - b.stake;
   const won = done.filter((b) => b.status === 'won'), lost = done.filter((b) => b.status === 'lost');
@@ -951,7 +1009,7 @@ function renderSlip() {
     if (t.items.length > 1) h += `<div class="modes"><button data-act="mode" data-m="kombi" class="${t.kombi ? 'on' : ''}">Kombi</button>${t.sysOk ? `<button data-act="mode" data-m="system" class="${t.sys ? 'on' : ''}">System</button>` : ''}<button data-act="mode" data-m="einzel" class="${t.kombi || t.sys ? '' : 'on'}">Einzel</button></div>`;
     if (t.sys) {
       const n = t.items.length;
-      h += `<div class="sysPick"><span>Wie viele müssen stimmen?</span>${Array.from({ length: n - 2 }, (_, i) => i + 2).map((k) => `<button data-act="sysK" data-k="${k}" class="${k === t.sys ? 'on' : ''}">${k} aus ${n}<small>${nRows(n, k)} Reihen</small></button>`).join('')}</div>`;
+      h += `<div class="sysPick"><span>Wie viele müssen stimmen? <button class="sysHelp" data-act="sysInfo" title="So funktioniert die Systemwette">? So funktioniert's</button></span>${Array.from({ length: n - 2 }, (_, i) => i + 2).map((k) => `<button data-act="sysK" data-k="${k}" class="${k === t.sys ? 'on' : ''}">${k} aus ${n}<small>${nRows(n, k)} Reihen</small></button>`).join('')}</div>`;
     }
     h += t.items.map((i) => `<div class="pick ${i.ok ? '' : 'bad'}">
       <b>${i.e ? esc(pickLabel(i.e, i.m, i.p, i.line)) : 'Tipp'}</b>
@@ -1153,12 +1211,14 @@ document.addEventListener('click', (ev) => {
   else if (a === 'sport') { V.sport = b.dataset.s; V.lg = 'all'; }
   else if (a === 'lg') V.lg = b.dataset.l;
   else if (a === 'more') { V.open.has(b.dataset.id) ? V.open.delete(b.dataset.id) : V.open.add(b.dataset.id); }
+  else if (a === 'pAll') { V.pAll ||= new Set(); V.pAll.has(b.dataset.k) ? V.pAll.delete(b.dataset.k) : V.pAll.add(b.dataset.k); }
   else if (a === 'filter') V.filter = b.dataset.f;
   else if (a === 'fav') { const t = b.dataset.t; S.fav = S.fav.includes(t) ? S.fav.filter((x) => x !== t) : [...S.fav, t]; save(); }
   else if (a === 'favL') { const l = b.dataset.l, f = S.favL || []; S.favL = f.includes(l) ? f.filter((x) => x !== l) : [...f, l]; save(); }
   else if (a === 'qClear') { V.q = ''; $('#q').value = ''; $('#qx').hidden = true; }
   else if (a === 'mode') { S.mode = b.dataset.m; save(); }
   else if (a === 'sysK') { S.sysK = +b.dataset.k; save(); }
+  else if (a === 'sysInfo') { sysInfo(); return; }
   else if (a === 'clear') { S.slip = []; V.warn = ''; save(); }
   else if (a === 'stake') {
     const t = totals(), parts = t.sys ? t.rows : t.kombi || S.slip.length < 2 ? 1 : S.slip.length;

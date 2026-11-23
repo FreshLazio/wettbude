@@ -531,3 +531,69 @@ table.heat td.sum { background: none; text-align: right; white-space: nowrap; pa
   .wkPick b { font-size: 13px; }
   .panel { padding: 2px 8px 10px; }
 }
+
+/* ---------- Chat ---------- */
+#chatFab { position: fixed; left: 14px; bottom: 14px; z-index: 31; width: 52px; height: 52px; border-radius: 50%; background: var(--pine); color: #fff; font-size: 22px; box-shadow: 0 6px 20px rgba(0, 0, 0, .3); }
+#chatFab.on { background: var(--pine2); }
+#chatFab b { position: absolute; top: -2px; right: -2px; min-width: 20px; padding: 1px 6px; border-radius: 10px; background: var(--amber); color: var(--amberInk); font-size: 12px; font-weight: 800; }
+#chatFab b:empty { display: none; }
+#chat { position: fixed; left: 14px; bottom: 76px; z-index: 40; width: min(380px, calc(100vw - 28px)); height: min(560px, calc(100vh - 150px)); display: flex; flex-direction: column; border-radius: 14px; background: var(--card); box-shadow: 0 12px 40px rgba(0, 0, 0, .28); overflow: hidden; }
+#chat[hidden] { display: none; }
+#chat header { display: flex; align-items: center; gap: 10px; padding: 10px 14px; background: var(--pine); color: var(--pineInk); }
+#chat header b { font-size: 15px; }
+#chat header button { margin-left: 4px; font-size: 22px; line-height: 1; color: var(--pineMut); }
+.cOnly { margin-left: auto; font-size: 12px; color: var(--pineMut); display: flex; gap: 4px; align-items: center; }
+.cList { flex: 1; overflow: auto; padding: 10px; display: flex; flex-direction: column; gap: 8px; background: var(--bg); }
+.cEmpty { margin: auto; color: var(--mut); text-align: center; padding: 20px; }
+.cMsg { max-width: 88%; padding: 7px 10px 4px; border-radius: 12px; background: var(--card); border: 1px solid var(--line); align-self: flex-start; }
+.cMsg.mine { align-self: flex-end; background: #e6efe9; border-color: #cddcd3; }
+.cMsg.q { border-left: 4px solid var(--amber); }
+.cMsg.bot { background: #fbf6e8; }
+.cHead { display: flex; gap: 8px; align-items: baseline; font-size: 12px; }
+.cHead span { color: var(--mut); }
+.cHead em { font-style: normal; font-weight: 700; color: var(--amberInk); background: var(--amber); padding: 0 6px; border-radius: 6px; }
+.cQuote { margin: 3px 0; padding: 3px 7px; border-left: 3px solid var(--pineMut); font-size: 12px; color: var(--mut); }
+.cText { margin: 2px 0; word-wrap: break-word; overflow-wrap: anywhere; }
+.cText a { color: var(--pine2); }
+.cAct { display: flex; gap: 10px; }
+.cAct button { font-size: 11px; color: var(--mut); padding: 2px 0; }
+.cAct button:hover { color: var(--ink); text-decoration: underline; }
+.cRe { padding: 6px 12px; font-size: 12px; background: #fbf6e8; border-top: 1px solid var(--line); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.cRe button { float: right; font-size: 16px; line-height: 1; }
+.cErr { margin: 0; padding: 4px 12px; color: var(--lose); font-size: 12px; }
+.cForm { display: flex; gap: 6px; padding: 8px; border-top: 1px solid var(--line); align-items: flex-end; }
+.cForm textarea { flex: 1; resize: none; min-height: 36px; padding: 8px 10px; border: 1px solid var(--line); border-radius: 10px; font: inherit; }
+.cQ { width: 36px; height: 36px; border-radius: 10px; opacity: .45; }
+.cQ.on { opacity: 1; background: #fbf6e8; }
+.cSend { height: 36px; padding: 0 14px; border-radius: 10px; background: var(--amber); color: var(--amberInk); font-weight: 800; }
+@media (max-width: 1080px) { #chatFab { bottom: 14px; } }
+
+/* Spieler: Archiv älterer Wetten */
+.archiv { margin-top: 18px; }
+.archiv > summary { cursor: pointer; padding: 10px 14px; border-radius: 10px; background: var(--card); border: 1px solid var(--line); font-weight: 700; color: var(--mut); }
+.archiv[open] > summary { margin-bottom: 10px; color: var(--ink); }
+
+/* NBA-Spielerwetten */
+.propTbl { display: flex; flex-direction: column; gap: 4px; }
+.propTbl .pr { display: grid; grid-template-columns: minmax(0, 1fr) 52px 96px 96px; gap: 6px; align-items: center; }
+.propTbl .pn { font-weight: 600; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.propTbl .pl { text-align: center; font-variant-numeric: tabular-nums; color: var(--mut); font-weight: 700; }
+
+/* Systemwette erklärt */
+.sysHelp { margin-left: 6px; padding: 1px 8px; border-radius: 10px; background: var(--amber); color: var(--amberInk); font-size: 11px; font-weight: 800; }
+#sysInfo { position: fixed; inset: 0; z-index: 60; display: flex; align-items: center; justify-content: center; padding: 16px; background: rgba(10, 20, 15, .45); }
+#sysInfo[hidden] { display: none; }
+.sysBox { position: relative; width: min(520px, 100%); max-height: calc(100vh - 32px); overflow: auto; padding: 18px 20px; border-radius: 14px; background: var(--card); box-shadow: 0 16px 48px rgba(0, 0, 0, .3); }
+.sysBox h3 { margin: 0 0 8px; }
+.sysBox h4 { margin: 14px 0 6px; font-size: 13px; text-transform: uppercase; letter-spacing: .04em; color: var(--mut); }
+.sysBox p { margin: 6px 0; }
+.sysBox .x { position: absolute; top: 8px; right: 12px; font-size: 24px; line-height: 1; color: var(--mut); }
+.sysLeg > div, .sysRows > div { display: grid; grid-template-columns: 22px minmax(0, 1fr) auto; gap: 8px; align-items: center; padding: 4px 0; border-bottom: 1px solid var(--line); }
+.sysRows > div { grid-template-columns: minmax(0, 1fr) auto auto; }
+.sysLeg i { font-style: normal; font-weight: 800; text-align: center; border-radius: 6px; background: var(--pine); color: #fff; font-size: 12px; }
+.sysLeg b, .sysRows b { font-variant-numeric: tabular-nums; }
+.sysTbl { width: 100%; border-collapse: collapse; font-variant-numeric: tabular-nums; }
+.sysTbl th, .sysTbl td { padding: 6px 4px; text-align: left; border-bottom: 1px solid var(--line); font-size: 13px; }
+.sysTbl th { color: var(--mut); font-weight: 600; }
+.sysTbl tr.lost td { color: var(--mut); }
+.sysTbl .pos { color: var(--win); } .sysTbl .neg { color: var(--lose); }

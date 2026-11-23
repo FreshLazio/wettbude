@@ -21,6 +21,24 @@ async function get(url, json) {
   return json ? r.json() : r.text();
 }
 
+// Basketball-Spielerstatistik eines Spiels: { «Tatum J.»: { pts, reb, ast, tpm } } oder null (noch keine)
+// Feed-Spalten (PF): PTS REB AST MIN FGM FGA 2PM 2PA 3PM 3PA ...; «-» = 0
+export async function fsPlayerStats(fsId) {
+  const t = await get(`https://www.flashscore.com/x/feed/df_psn_1_${fsId}`);
+  const cols = [...t.matchAll(/PF÷([^¬]+)/g)].map((m) => m[1]).filter((c) => c !== 'Player');
+  const ix = (c) => cols.indexOf(c), out = {};
+  for (const row of t.split('~')) {
+    const n = /PJ÷([^¬]+)/.exec(row)?.[1], pc = /PC÷([^¬]*)/.exec(row)?.[1];
+    if (!n || pc == null) continue;
+    const v = pc.split('|').map((x) => (x === '-' ? 0 : x));
+    const num = (c) => (ix(c) >= 0 ? +v[ix(c)] || 0 : null);
+    const min = String(v[ix('MIN')] || '');
+    if (!min || min === '0' || min === '00:00') continue; // nicht eingesetzt
+    out[n] = { pts: num('PTS'), reb: num('REB'), ast: num('AST'), tpm: num('3PM') };
+  }
+  return Object.keys(out).length ? out : null;
+}
+
 // Spielliste: day = 0 heute, 1 morgen, ...
 export async function fsList(sportId, day) {
   const t = await get(`${LIST}f_${sportId}_${day}_1_en_1`);

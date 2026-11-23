@@ -4,10 +4,29 @@ const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toL
 const overUnder = (total, leg) => (total === leg.line ? 'void' : (total > leg.line) === (leg.p === 'O') ? 'won' : 'lost');
 const result = (h, a) => (h > a ? '1' : h < a ? '2' : 'X');
 
+// Spielerwetten (NBA): Markt «pp|pts|Donovan Clingan», Werte aus der Flashscore-Statistik (ev.ps),
+// dort heisst der Spieler «Clingan D.» → Schlüssel «clingan|d».
+export const PSTAT = { pts: 'Punkte', reb: 'Rebounds', ast: 'Assists', tpm: 'Dreier' };
+const pNorm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+export const psKey = (fsName) => { const t = pNorm(fsName).split(' '); return t.slice(0, -1).join(' ') + '|' + (t.at(-1) || '')[0]; };
+export function psFind(ps, name) {
+  const t = pNorm(name).split(' ');
+  for (let i = 1; i < t.length; i++) { const v = ps?.[t.slice(i).join(' ') + '|' + t[0][0]]; if (v) return v; }
+  return null;
+}
+
 // Ergebnis eines einzelnen Tipps: 'won', 'lost', 'void' oder null (Spiel noch offen).
 export function evalLeg(leg, ev) {
   if (ev.void) return 'void';
   if (!ev.done) return null;
+  if (leg.m.startsWith('pp|')) {
+    const [, st, name] = leg.m.split('|');
+    // Statistik kommt kurz nach Spielschluss; fehlt sie nach 2 Tagen noch, Einsatz zurück
+    if (!ev.ps) return Date.now() - ev.start > 2 * 864e5 ? 'void' : null;
+    const v = psFind(ev.ps, name);
+    if (!v || v[st] == null) return 'void'; // nicht gespielt
+    return overUnder(v[st], leg);
+  }
   // Ski: Sieger, Podest (Top 3), Top 10. Nicht gestartet = ungültig, ausgeschieden/disqualifiziert = verloren.
   if (ev.race) {
     const r = ev.ranks?.[leg.p], top = { sw: 1, sp: 3, s10: 10 }[leg.m];
@@ -128,7 +147,12 @@ export const earlyText = (e) => `${e.sh}:${e.sa} · früh abgerechnet, Spiel lie
 
 // Resultat-Text eines Tipps. Nach Verlängerung/Penaltys steht der Endstand dabei,
 // z. B. «2:2 · n. P. 2:3» (Eishockey: 2:2 nach 60 Minuten, im Penaltyschiessen 2:3).
-export const scoreText = (e, leg) => (e.void ? 'abgesagt' : e.race ? raceText(e, leg) : `${e.sh}:${e.sa}` + (/^n\. [VP]\./.test(e.txt || '') ? ` · ${e.txt}` : ''));
+export const scoreText = (e, leg) => (e.void ? 'abgesagt' : e.race ? raceText(e, leg) : leg?.m?.startsWith('pp|') ? propText(e, leg) : `${e.sh}:${e.sa}` + (/^n\. [VP]\./.test(e.txt || '') ? ` · ${e.txt}` : ''));
+// Spielerwette: «27 Punkte · Spiel 88:87» bzw. «nicht gespielt»
+function propText(e, leg) {
+  const [, st, name] = leg.m.split('|'), v = psFind(e.ps, name);
+  return (v && v[st] != null ? `${v[st]} ${PSTAT[st] || st}` : e.ps ? 'nicht gespielt' : 'Statistik folgt') + ` · Spiel ${e.sh}:${e.sa}`;
+}
 // Ski: Rang des getippten Athleten und wer gewonnen hat, z. B. «2. Platz · Sieger Haugan T.»
 function raceText(e, leg) {
   const r = e.ranks?.[leg?.p];
@@ -157,6 +181,9 @@ export function insured(bet) {
 
 // Höchstgewinn pro Schein wie bei echten Buchmachern: Kombis aus hohen Quoten (z. B. mehrere
 // exakte Resultate à 501) ergäben sonst Millionen. Mehr als das wird nicht ausbezahlt.
+// Spieltag eines abgerechneten Scheins: Anpfiff des letzten Spiels, nicht der Moment der Abrechnung
+// (sonst landet alles an dem Tag, an dem man sich einloggt oder der Server neu startet).
+export const playAt = (b) => Math.max(0, ...(b?.legs || []).map((l) => +l.start || 0)) || b?.done || b?.t || 0;
 export const MAX_WIN = 10000;
 export const capWin = (x) => Math.min(x, MAX_WIN);
 

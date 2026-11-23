@@ -8,9 +8,9 @@ import { FD, FD_LEAGUES, parseFixtures, parseResults } from './fd.mjs';
 import zlib from 'node:zlib';
 import { fit, derive, fromTable, oneXtwo, hockey, hockeyFit, ratings, fromRatings } from './model.mjs';
 import { TS_LEAGUES, tsStart } from './tsdb.mjs';
-import { FS_SPORT, fsList, fsMatch, fsOdds, fsLeague, fsRaces } from './flashscore.mjs';
+import { FS_SPORT, fsList, fsMatch, fsOdds, fsLeague, fsRaces, fsPlayerStats } from './flashscore.mjs';
 import { accounts } from './accounts.mjs';
-import { evalLeg, evalLegEarly, earlyText, settleBet, scoreText } from './public/settle.js';
+import { evalLeg, evalLegEarly, earlyText, settleBet, scoreText, psKey } from './public/settle.js';
 
 const DIR = path.dirname(fileURLToPath(import.meta.url));
 const PUB = path.join(DIR, 'public');
@@ -31,6 +31,7 @@ const LEAGUES = [
   [F, null, 'sui.4.1', '1. Liga Classic Gruppe 1', 'Schweiz', true],
   [F, null, 'sui.4.2', '1. Liga Classic Gruppe 2', 'Schweiz', true],
   [F, null, 'sui.4.3', '1. Liga Classic Gruppe 3', 'Schweiz', true],
+  [F, null, 'sui.u19', 'U19 Elite', 'Schweiz'], // aus u19.json, immer Modellquoten
   [F, 'soccer', 'ita.1', 'Serie A', 'Italien'],
   [F, 'soccer', 'ita.2', 'Serie B', 'Italien'],
   [F, 'soccer', 'ita.coppa_italia', 'Coppa Italia', 'Italien'],
@@ -237,9 +238,16 @@ const ORDER = [['bet365', 'b365'], ['Pinnacle', 'pin'], ['DraftKings', 'dk'], ['
 const tag = (obj, b) => Object.fromEntries(Object.entries(obj).map(([k, o]) => [k, { o, b }]));
 
 function build(ev) {
+  buildBase(ev);
+  // NBA-Spielerwetten von Unibet dazu (bet365 bietet sie über Flashscore nicht an); Statistik für die Abrechnung
+  const s = ev.src || {};
+  if (s.props && ev.m && !ev.race) Object.assign(ev.m, s.props);
+  if (s.ps) ev.ps = s.ps;
+}
+function buildBase(ev) {
   const s = ev.src || {};
   // Ski-Rennen: nur Modellquoten (kein Buchmacher bietet sie über Flashscore an)
-  if (ev.race) { ev.m = s.ski || {}; ev.book = 'Modell'; ev.cmp = {}; return; }
+  if (ev.race) { ev.m = s.ski || {}; ev.book = s.skiBook || 'Modell'; ev.cmp = {}; return; }
   const soccer = ev.sport === F;
   if (s.fs?.m && Object.keys(s.fs.m).length) {
     // Flashscore hat Vorrang: alle Märkte vom ersten Anbieter (bet365, Interwetten, ...).
@@ -495,6 +503,81 @@ async function modelSweep() {
   }
 }
 
+// U19 Elite (Schweiz): keine Quelle mit maschinellem Zugriff, darum pflegt Claude u19.json von Hand
+// (Spielplan + Resultate). Immer Modellquoten: Angriff/Abwehr aus allen Saisonspielen, neuere zählen mehr (Form).
+// U21-Regel: spielt die U21 des Klubs am selben Tag, fehlen der U19 die Spieler, die hochgezogen werden
+// (eher schwächer); spielt die U21 an einem anderen Tag, sind die U19-Stammspieler dabei (eher stärker).
+const U19 = path.join(DIR, 'u19.json');
+const U21 = { 'Young Boys': 'young boys', Basel: 'basel', Luzern: 'luzern', 'Zürich': 'zurich', Ticino: 'lugano', 'St. Gallen': 'st gallen', Thun: 'thun', Servette: 'servette', Sion: 'sion', GC: 'grasshoppers?', Lausanne: 'lausanne', Winterthur: 'winterthur', Xamax: 'xamax', Aarau: 'aarau' };
+const plainName = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[.\-]/g, ' ').replace(/\b(fc|bsc|fcz|ss)\b/g, '').replace(/\s+/g, ' ').trim();
+const zDay = (t) => new Date(t).toLocaleDateString('sv-SE', { timeZone: 'Europe/Zurich' });
+// true = U21 spielt am selben Tag, false = U21 spielt in den 3 Tagen davor/danach an einem anderen Tag, null = unbekannt
+function u21Same(club, start) {
+  const key = U21[club];
+  if (!key) return null;
+  const re = new RegExp(`^${key}( sport)? (ii|u21|u-21)$`);
+  let other = false;
+  for (const e of store.values()) {
+    if (e.sport !== F || e.lg === 'sui.u19' || Math.abs(e.start - start) > 3.5 * DAY || e.void) continue;
+    if (![e.home?.n, e.away?.n].some((n) => re.test(plainName(n)))) continue;
+    if (zDay(e.start) === zDay(start)) return true;
+    other = true;
+  }
+  return other ? false : null;
+}
+// Logo der ersten Mannschaft (Super/Challenge League) für das U19-Team; einmal gefunden, gemerkt
+const u19Logo = new Map();
+function logoOf(club) {
+  if (u19Logo.has(club)) return u19Logo.get(club);
+  const key = U21[club];
+  if (!key) return '';
+  const re = new RegExp(`^(neuchatel )?${key}( sport)?$`);
+  for (const e of store.values()) {
+    if (e.sport !== F || !/^sui\.[12]$/.test(e.lg)) continue;
+    for (const t of [e.home, e.away]) if (t?.l && re.test(plainName(t.n))) { u19Logo.set(club, t.l); return t.l; }
+  }
+  return '';
+}
+let u19At = 0;
+function u19Sweep() {
+  let doc;
+  try { doc = JSON.parse(fs.readFileSync(U19, 'utf8')); } catch { return; }
+  const now = Date.now();
+  const games = (doc.games || []).map((g) => ({ ...g, ts: Date.parse(g.t) })).filter((g) => Number.isFinite(g.ts));
+  const R = ratings(games.filter((g) => g.ts < now).map((g) => ({ home: g.h, away: g.a, hs: g.hs, as: g.as, ts: g.ts })), now, { half: 35 * DAY, prior: 3 });
+  let n = 0;
+  for (const g of games) {
+    const id = 'u19-' + g.t.slice(0, 10) + '-' + plainName(g.h).replace(/ /g, '') + '-' + plainName(g.a).replace(/ /g, '');
+    const old = store.get(id);
+    if (!old && g.ts < now - 2 * DAY) continue; // alte Spiele nur für die Ratings
+    const ev = {
+      id, sport: F, lg: 'sui.u19', start: g.ts, day: '', u19: true, nohalf: true,
+      home: { n: g.h + ' U19', s: g.h + ' U19', l: logoOf(g.h) }, away: { n: g.a + ' U19', s: g.a + ' U19', l: logoOf(g.a) },
+      state: 'pre', done: false, void: false, et: false, txt: '', sh: null, sa: null, src: {},
+    };
+    if (Number.isFinite(g.hs) && Number.isFinite(g.as)) Object.assign(ev, { state: 'post', done: true, txt: 'Beendet', sh: g.hs, sa: g.as });
+    else if (g.off || g.ts < now - 7 * DAY) Object.assign(ev, { state: 'post', void: true, txt: 'Verschoben' });
+    else if (g.ts < now) Object.assign(ev, now - g.ts < 2 * 36e5 ? { state: 'in', txt: 'läuft' } : { state: 'post', txt: 'Resultat folgt' });
+    else if (R) {
+      const lam = fromRatings(R, g.h, g.a, 4.5, 0.85);
+      // Poisson ist bei so vielen Toren zu sicher (Saison: 78 % über 2.5, Modell sagte ~88 %): Tore Richtung 3.9 ziehen
+      const tot = lam.lh + lam.la, f = (0.6 * tot + 0.4 * 3.9) / tot;
+      lam.lh *= f; lam.la *= f;
+      const hS = g.u21h ?? u21Same(g.h, g.ts), aS = g.u21a ?? u21Same(g.a, g.ts);
+      const adj = (x) => (x === true ? 0.88 : x === false ? 1.05 : 1);
+      lam.lh *= adj(hS) / Math.sqrt(adj(aS)); lam.la *= adj(aS) / Math.sqrt(adj(hS));
+      // Poisson unterschätzt Unentschieden (U19 Elite diese Saison: 21 %), darum X etwas anheben
+      const w0 = oneXtwo(lam, 'Modell');
+      const w = w0 && (() => { const p = { 1: 1 / w0[1].o, X: 1.18 / w0.X.o, 2: 1 / w0[2].o }, s = p[1] + p.X + p[2]; return Object.fromEntries(Object.entries(p).map(([k, x]) => [k, Math.round(100 / (1.07 * x / s)) / 100])); })();
+      if (w) ev.src = { mod: { w }, lam, u21: [hS, aS] };
+      ev.u21 = [hS, aS];
+    }
+    upsert(ev);
+    n++;
+  }
+  if (now - u19At > 36e5) { u19At = now; console.log(`U19 Elite: ${n} Spiele aus u19.json`); }
+}
+
 // Ein Spiel nachladen, das nicht mehr im Speicher ist (alte offene Wette nach einem Neustart).
 const asked = new Map();
 async function recover(id, slug, start) {
@@ -522,7 +605,7 @@ async function fastSweep() {
 // bet365-Quoten: ein Abruf pro Fussballspiel, darum gedrosselt und gecacht.
 async function b365Sweep() {
   const now = Date.now();
-  const due = [...store.values()].filter((ev) => ev.sport === F && !ev.fd && !ev.id.startsWith('fs') && !fsCovered.has(ev.lg) && ev.state === 'pre' && !ev.void && ev.start > now && ev.start < now + 5 * DAY
+  const due = [...store.values()].filter((ev) => ev.sport === F && !ev.fd && !ev.u19 && !ev.id.startsWith('fs') && !fsCovered.has(ev.lg) && ev.state === 'pre' && !ev.void && ev.start > now && ev.start < now + 5 * DAY
     && now - (ev.b365At || 0) > (ev.start - now < 3 * 36e5 ? 5 : 25) * 6e4);
   due.sort((a, b) => a.start - b.start);
   await pool(due.slice(0, 400), 5, async (ev) => {
@@ -592,7 +675,7 @@ async function fsSweep() {
       upsert(fsEvent(sport, slug, x));
     }
   }
-  const open = [...store.values()].filter((e) => e.state === 'pre' && !e.void && e.start > now && e.start < now + 8 * DAY);
+  const open = [...store.values()].filter((e) => !e.u19 && e.state === 'pre' && !e.void && e.start > now && e.start < now + 8 * DAY);
   let matched = 0;
   for (const ev of open) {
     if (!ev.fsId) {
@@ -643,6 +726,7 @@ async function fsSweep() {
   lastSweep = Date.now();
   console.log(`Flashscore: ${own.length} offene Spiele in ${fsCovered.size} Ligen, ${fsStat.odds} mit Quoten`);
   await skiSweep().catch((e) => console.log('Ski:', e.message));
+  await propsSweep().catch((e) => console.log('NBA-Spielerwetten:', e.message));
   queueSave();
 }
 
@@ -681,8 +765,106 @@ function skiModel(ath, disc) {
   return m;
 }
 
+// Echte Ski-Quoten von Unibet (Kambi-Angebot, offen abrufbar). Rennen erscheinen meist erst 1–2 Tage vorher.
+const KAMBI = 'https://eu-offering-api.kambicdn.com/offering/v2018/ub';
+let kambi = { at: 0, ev: [] };
+const norm = (s) => String(s || '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().replace(/[^a-z ]/g, ' ').replace(/\s+/g, ' ').trim();
+async function kambiSki() {
+  if (Date.now() - kambi.at < 20 * 6e4) return kambi.ev;
+  const out = [];
+  try {
+    const list = JSON.parse(await getText(`${KAMBI}/listView/winter_sports/alpine_skiing.json?lang=en_GB&market=CH&useCombined=true`));
+    for (const { event: e } of list.events || []) {
+      if (/standings|overall|cup winner/i.test(e.name)) continue; // Saisonwertungen sind keine Rennen
+      const d = JSON.parse(await getText(`${KAMBI}/betoffer/event/${e.id}.json?lang=en_GB&market=CH`));
+      const m = {};
+      for (const b of d.betOffers || []) {
+        const L = b.criterion?.englishLabel || b.criterion?.label || '';
+        const k = /top 3|podium/i.test(L) ? 'sp' : /top 10/i.test(L) ? 's10' : /winner|finishing position|to win/i.test(L) ? 'sw' : null;
+        if (!k || m[k]) continue;
+        m[k] = (b.outcomes || []).filter((o) => o.status === 'OPEN' && o.odds > 1000).map((o) => ({ n: o.participant || o.label, o: Math.round(o.odds / 10) / 100 }));
+      }
+      out.push({ name: e.englishName || e.name, group: e.group || '', start: Date.parse(e.start), m });
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    kambi = { at: Date.now(), ev: out };
+  } catch (e) { console.log('Unibet Ski:', e.message); kambi.at = Date.now() - 15 * 6e4; }
+  return kambi.ev;
+}
+// Unibet «Lucas Pinheiro Braathen» ↔ Flashscore «Pinheiro Braathen L.»
+function kambiMarkets(K, r, men, disc, ath) {
+  const en = Object.entries(DISC).find(([, v]) => v === disc)?.[0] || disc;
+  const ke = K.find((k) => Math.abs(k.start - r.start) < 4 * 36e5 && /\bwomen|ladies\b/i.test(k.name + k.group) !== men && norm(k.name).includes(norm(en)));
+  if (!ke) return null;
+  const fsKey = new Map(ath.map((a) => { const t = norm(a.n).split(' '); return [t.slice(0, -1).join(' ') + '|' + (t.at(-1) || '')[0], a.id]; }));
+  const idOf = (n) => { const t = norm(n).split(' '); for (let i = 1; i < t.length; i++) { const id = fsKey.get(t.slice(i).join(' ') + '|' + t[0][0]); if (id) return id; } return null; };
+  const m = {};
+  for (const [k, list] of Object.entries(ke.m)) {
+    const x = {};
+    for (const o of list) { const id = idOf(o.n); if (id) x[id] = { o: o.o, b: 'Unibet' }; }
+    if (Object.keys(x).length >= 5) m[k] = x;
+  }
+  return Object.keys(m).length ? m : null;
+}
+
+// NBA-Spielerwetten (Über/Unter Punkte, Rebounds, Assists, Dreier) von Unibet, alle 20 Minuten
+const PROP_CRIT = [[/^points scored by the player/i, 'pts'], [/^rebounds by the player/i, 'reb'], [/^assists by the player/i, 'ast'], [/^3-point field goals made by the player/i, 'tpm']];
+let propsAt = 0;
+async function propsSweep() {
+  const now = Date.now();
+  if (now - propsAt > 20 * 6e4) {
+    propsAt = now;
+    try {
+      const list = JSON.parse(await getText(`${KAMBI}/listView/basketball/nba.json?lang=en_GB&market=CH&useCombined=true`));
+      const last = (s) => norm(s).split(' ').at(-1);
+      const fsNba = [...store.values()].filter((e) => e.lg === 'nba' && String(e.id).startsWith('fs') && e.state === 'pre');
+      let n = 0;
+      for (const { event: k } of list.events || []) {
+        const st = Date.parse(k.start);
+        const ev = fsNba.find((e) => Math.abs(e.start - st) < 3 * 36e5 && last(e.home.n) === last(k.homeName) && last(e.away.n) === last(k.awayName));
+        if (!ev || st - now > 2 * DAY) continue;
+        const d = JSON.parse(await getText(`${KAMBI}/betoffer/event/${k.id}.json?lang=en_GB&market=CH`));
+        const props = {};
+        for (const b of d.betOffers || []) {
+          const st2 = PROP_CRIT.find(([re]) => re.test(b.criterion?.englishLabel || ''))?.[1];
+          if (!st2) continue;
+          const by = new Map();
+          for (const o of b.outcomes || []) {
+            if (o.status !== 'OPEN' || !(o.odds > 1000) || !o.participant || o.line == null) continue;
+            const key = o.participant + '|' + o.line;
+            if (!by.has(key)) by.set(key, { n: o.participant, line: o.line / 1000 });
+            by.get(key)[/^over/i.test(o.englishLabel || o.label) ? 'O' : 'U'] = Math.round(o.odds / 10) / 100;
+          }
+          // pro Spieler die ausgeglichenste Linie
+          const best = new Map();
+          for (const x of by.values()) {
+            if (!x.O || !x.U) continue;
+            const g = Math.abs(x.O - x.U), cur = best.get(x.n);
+            if (!cur || g < cur.g) best.set(x.n, { ...x, g });
+          }
+          for (const x of best.values()) props[`pp|${st2}|${x.n}`] = { line: x.line, O: { o: x.O, b: 'Unibet' }, U: { o: x.U, b: 'Unibet' } };
+        }
+        if (Object.keys(props).length) { ev.src.props = props; build(ev); n++; }
+        await new Promise((r) => setTimeout(r, 300));
+      }
+      console.log(`NBA-Spielerwetten: ${n} Spiele`);
+    } catch (e) { console.log('NBA-Spielerwetten:', e.message); }
+  }
+  // Statistik nach Spielschluss holen (nur für Spiele mit Spielerwetten)
+  for (const ev of store.values()) {
+    if (!ev.done || !ev.src?.props || ev.src.ps || now - ev.start > 3 * DAY || (ev.psTry || 0) > now - 15 * 6e4) continue;
+    ev.psTry = now;
+    try {
+      const raw = await fsPlayerStats(ev.id.slice(2));
+      if (raw) { ev.src.ps = Object.fromEntries(Object.entries(raw).map(([k, v]) => [psKey(k), v])); build(ev); queueSave(); }
+    } catch { /* später nochmals */ }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+}
+
 async function skiSweep() {
   const now = Date.now();
+  const K = await kambiSki();
   for (const d of [0, 1, 2, -1, 3, 4, 5, 6, 7, -2, -3]) {
     const k = 'ski|' + d, c = fsDays.get(k);
     const ttl = d >= -1 && d <= 0 ? 5 : d < -1 ? 180 : 60;
@@ -712,7 +894,14 @@ async function skiSweep() {
       };
       // Modell nur vor dem Start neu rechnen, und nur wenn sich die Startliste geändert hat
       const sig = 'v2|' + ath.map((a) => a.id + a.seed).join(); // v2 = Modellversion, bei Änderungen am Modell erhöhen
-      if (r.state === 'pre') ev.src.ski = old?.skiSig === sig && old.src?.ski ? old.src.ski : skiModel(ath, disc);
+      if (r.state === 'pre') {
+        const model = old?.skiSig === sig && old.src?.skiModel ? old.src.skiModel : skiModel(ath, disc);
+        ev.src.skiModel = model;
+        // Ein Anbieter pro Rennen: Unibet für die Märkte, die es anbietet, Modell nur für fehlende Märkte
+        const real = kambiMarkets(K, r, mt[3] === 'Men', disc, ath);
+        ev.src.ski = real ? { ...model, ...real } : model;
+        ev.src.skiBook = real ? 'Unibet' : 'Modell';
+      } else if (old?.src) { ev.src.ski = old.src.ski; ev.src.skiBook = old.src.skiBook; }
       ev.skiSig = r.state === 'pre' ? sig : old?.skiSig;
       upsert(ev);
       n++;
@@ -792,7 +981,7 @@ function payload(need) {
       for (const k of ['state', 'done', 'void', 'sh', 'sa', 'win', 'h1', 'et', 'ot', 'txt', 'ph']) pub[k] = tw[k];
     }
     // Modellquoten nur, wenn 24 Stunden vor dem Spiel immer noch kein Buchmacher Quoten hat.
-    if (ev.book === 'Modell' && !ev.race && ev.start - now > DAY) { pub.m = {}; pub.cmp = {}; pub.wait = true; }
+    if (ev.book === 'Modell' && ev.lg !== 'sui.u19' && ev.start - now > DAY) { pub.m = {}; pub.cmp = {}; pub.wait = true; }
     events.push(pub);
   }
   return { t: now, upd: lastSweep, leagues: LEAGUES.filter((l) => !l.dead || fsCovered.has(l.slug)).map(({ slug, sport, name, land }) => ({ slug, sport, name, land })), events };
@@ -965,6 +1154,9 @@ async function accApi(req, res, u) {
     else if (p === 'void' && req.method === 'POST') out = await acc.voidBet(token, await readBody(req, 10000));
     else if (p === 'rescale' && req.method === 'POST') out = await acc.rescale(token, await readBody(req, 10000));
     else if (p === 'rename' && req.method === 'POST') out = await acc.rename(token, (await readBody(req, 10000)).name);
+    else if (p === 'chat' && req.method === 'GET') out = await acc.chatGet(token, u.searchParams.get('since'));
+    else if (p === 'chat' && req.method === 'POST') out = await acc.chatSend(token, await readBody(req, 4000));
+    else if (p === 'chatdel' && req.method === 'POST') out = await acc.chatDel(token, (await readBody(req, 1000)).id);
     else return send(404, { error: 'Nicht gefunden' });
     send(200, out);
   } catch (e) {
@@ -1014,6 +1206,8 @@ async function guarded(fn) {
 
 loadStore();
 for (const ev of store.values()) build(ev);
+u19Sweep();
+setInterval(u19Sweep, 10 * 60e3);
 tsStart({ upsert, dataDir: DATA, log: (m) => console.log(m) });
 (async () => {
   await loadRankings().catch(() => {});
