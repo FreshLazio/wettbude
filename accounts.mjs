@@ -478,11 +478,65 @@ export function accounts({ dataDir, enrich = (b) => b }) {
         return { token, name: n, rev: 1 };
       });
     },
+    // Bot-Konto (Clauder): kein Passwort, niemand kann sich anmelden. Der Server bucht die Tipps
+    // aus clauder.json, sobald das Spiel Quoten hat, und rechnet die Scheine selbst ab.
+    // legOf(tipp) -> fertiger Tipp mit aktueller Quote, 'gone' (Spiel vorbei/fehlt) oder null (noch warten).
+    async botRun(cfg, { legOf, settle, auto }) {
+      const n = checkName(cfg?.name || 'Clauder'), k = keyOf(n), MAXSTAKE = 50;
+      return locked(k, async () => {
+        let u = await get('user:' + k);
+        if (u && !u.bot) return { error: 'Name gehört einem echten Spieler' };
+        if (!u) u = { name: n, bot: true, rev: 1, state: { name: n, bal: 500, start: 500, bets: [], gifts: [], skipped: [] }, at: Date.now() };
+        const s = u.state;
+        s.skipped ||= [];
+        let changed = !u.at || u.rev === 1;
+        const known = (id) => s.bets.some((b) => b.id === id) || s.skipped.includes(id);
+        // true = erledigt (gebucht oder verworfen), false = wartet noch auf Quote
+        const book = (p, id) => {
+          if (known(id)) return true;
+          const legs = (p.legs || [p]).map(legOf);
+          if (legs.some((l) => l === 'gone')) { s.skipped.push(id); changed = true; return true; }
+          if (legs.some((l) => !l)) return false;
+          // pro Spiel höchstens CHF 50 (Einsätze aller Scheine auf dasselbe Spiel zusammengezählt)
+          const evs = new Set(legs.map((l) => l.ev));
+          const onGame = s.bets.filter((b) => b.legs.some((l) => evs.has(l.ev))).reduce((x, b) => x + b.stake, 0);
+          const stake = Math.min(+p.stake || 0, MAXSTAKE - onGame, s.bal);
+          if (!(stake >= 0.5)) { s.skipped.push(id); changed = true; return true; }
+          s.bets.push({ id, t: Date.now(), stake: Math.round(stake * 100) / 100, legs, status: 'open', payout: 0, ...(p.note ? { note: String(p.note).slice(0, 300) } : {}) });
+          s.bal = Math.round((s.bal - stake) * 100) / 100;
+          changed = true;
+          return true;
+        };
+        let waiting = false;
+        for (const p of cfg.picks || []) if (!book(p, 'c-' + p.id)) waiting = true;
+        for (const p of s.auto || []) if (!book(p, p.id)) waiting = true;
+        // Abrechnen: wie beim Besitzer in der App, nur hier auf dem Server
+        for (const b of s.bets) {
+          if (b.status !== 'open') continue;
+          const out = settle(b);
+          if (!out) continue;
+          Object.assign(b, { status: out.status, payout: out.payout, done: Date.now() }, out.ins ? { ins: true } : {}, out.capped ? { capped: true } : {});
+          s.bal = Math.round((s.bal + out.payout) * 100) / 100;
+          changed = true;
+        }
+        // Neue Runde: erst wenn alles getippt und abgerechnet ist, dann 1 Tag Pause
+        const now = Date.now(), last = Math.max(0, ...s.bets.map((b) => b.done || b.t || 0));
+        if (auto && !waiting && !s.bets.some((b) => b.status === 'open') && now - last >= 864e5 && now >= (s.nextTry || 0)) {
+          const picks = auto(s) || [];
+          s.auto = picks;
+          s.nextTry = now + 6 * 36e5; // nichts Gutes gefunden: in 6 Stunden nochmals suchen
+          for (const p of picks) book(p, p.id);
+          changed = true;
+        }
+        if (changed) { u.rev++; u.at = Date.now(); await set('user:' + k, u); board = null; }
+        return { name: n, bal: s.bal, open: s.bets.filter((b) => b.status === 'open').length, bets: s.bets.length };
+      });
+    },
     async login({ name, pw }) {
       const k = keyOf(name);
       if (blocked(k)) throw err(429, 'Zu viele Versuche. Warte 10 Minuten.');
       const [rk, u] = await resolve(k);
-      if (!u || !same(hash(pw || '', u.salt), u.hash)) { fail(k); throw err(403, 'Name oder Passwort stimmt nicht.'); }
+      if (!u || u.bot || !same(hash(pw || '', u.salt), u.hash)) { fail(k); throw err(403, 'Name oder Passwort stimmt nicht.'); }
       const token = newToken();
       await set('tok:' + token, rk);
       return { token, name: u.name, rev: u.rev, state: u.state };

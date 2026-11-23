@@ -3,7 +3,7 @@ import { combinable, groupOdds } from './builder.js';
 
 const LS = 'wettbude.v1', START = 500, MIN = 0.5;
 const KOMBI_MAX = 20, SYS_MAX = 10; // wie bei Interwetten höchstens 20 Tipps pro Kombi
-const SPORTS = [['fussball', 'Fussball'], ['tennis', 'Tennis'], ['eishockey', 'Eishockey'], ['basketball', 'Basketball'], ['amfootball', 'American Football'], ['rugby', 'Rugby'], ['darts', 'Darts']];
+const SPORTS = [['fussball', 'Fussball'], ['tennis', 'Tennis'], ['eishockey', 'Eishockey'], ['basketball', 'Basketball'], ['amfootball', 'American Football'], ['rugby', 'Rugby'], ['darts', 'Darts'], ['ski', 'Ski alpin']];
 const POINTS = new Set(['basketball', 'amfootball', 'rugby']);
 const $ = (s) => document.querySelector(s);
 const esc = (s) => String(s ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
@@ -73,7 +73,12 @@ const isOpen = (e) => e && e.state === 'pre' && !e.void && e.start > Date.now();
 const key = (id, m, p) => `${id}|${m}|${p}`;
 const sg = (x) => (x > 0 ? '+' : '') + x;
 
+// Spielname für Wettschein und Statistik; Ski-Rennen haben kein Gegenüber
+const matchName = (e) => (e.race ? `${e.home.n} ${e.away.n}` : `${e.home.n} – ${e.away.n}`);
+const athName = (e, p) => (e.al || []).find((a) => a.id === p)?.n || p;
+
 function pickLabel(e, m, p, line) {
+  if (e.race) return `${athName(e, p)} ${{ sw: 'gewinnt', sp: 'auf dem Podest', s10: 'in den Top 10' }[m] || ''}`.trim();
   const H = e.home.n, A = e.away.n;
   const team = p === '1' ? H : p === '2' ? A : 'Unentschieden';
   const ou = (p === 'O' ? 'über ' : 'unter ') + line;
@@ -99,7 +104,7 @@ function mName(m, sp) {
   if (m.startsWith('ou')) return 'Über/Unter';
   if (m.startsWith('th') || m.startsWith('ta')) return 'Tore pro Team';
   if (sp === 'eishockey' && m === '1x2') return 'Spielausgang nach 60 Minuten';
-  return { '1x2': 'Spielausgang', ml: sp === 'eishockey' ? 'Sieger inkl. Verlängerung' : 'Sieger', dc: 'Doppelte Chance', dnb: 'Unentschieden: Geld zurück', h1: '1. Halbzeit', btts: 'Beide Teams treffen', cs: 'Genaues Resultat', gsa: 'Torschütze', gsf: 'Erster Torschütze', hc: 'Handicap' }[m] || m;
+  return { sw: 'Sieger', sp: 'Podest (Top 3)', s10: 'Top 10', '1x2': 'Spielausgang', ml: sp === 'eishockey' ? 'Sieger inkl. Verlängerung' : 'Sieger', dc: 'Doppelte Chance', dnb: 'Unentschieden: Geld zurück', h1: '1. Halbzeit', btts: 'Beide Teams treffen', cs: 'Genaues Resultat', gsa: 'Torschütze', gsf: 'Erster Torschütze', hc: 'Handicap' }[m] || m;
 }
 
 function dayLabel(t) {
@@ -150,7 +155,7 @@ function settle() {
       const e = byId.get(l.ev);
       if (!e) continue;
       const res = evalLeg(l, e);
-      if (res) { l.res = res; l.score = scoreText(e); changed = true; continue; }
+      if (res) { l.res = res; l.score = scoreText(e, l); changed = true; continue; }
       // Schon sicher, obwohl das Spiel noch läuft (z. B. Über 5.5 bei 5:2)
       const early = evalLegEarly(l, e);
       if (early) { l.res = early; l.score = earlyText(e); l.early = true; changed = true; }
@@ -190,6 +195,8 @@ function togglePick(k) {
     // Gleiches Spiel: im gleichen Markt ersetzt der neue Tipp den alten. Verschiedene Tormärkte
     // im Fussball (1X2, Doppelte Chance, Über/Unter, Beide treffen, Resultat) lassen sich kombinieren.
     const e = byId.get(ev);
+    // Ski: mehrere Fahrer und Märkte aus demselben Rennen bleiben nebeneinander (als Einzelwetten)
+    if (e?.race) { S.slip.push({ ev, m, p }); V.warn = ''; save(); render(); return; }
     const same = S.slip.filter((s) => s.ev === ev && s.m !== m);
     const ok = combinable(e, m) && same.every((s) => combinable(e, s.m));
     if (same.length && !ok) toast('Dieser Markt lässt sich nicht mit anderen Tipps aus demselben Spiel kombinieren. Der alte Tipp wurde ersetzt.');
@@ -226,6 +233,7 @@ function totals() {
   let gErr = '';
   for (const [ev, list] of groups) {
     if (list.length < 2) continue;
+    if (list[0].e.race) { gErr = 'Mehrere Tipps aus demselben Ski-Rennen gehen nur als Einzelwetten.'; continue; }
     const r = groupOdds(list[0].e, list.map((i) => ({ m: i.m, p: i.p, line: i.line, o: i.sel.o })));
     if (r.err) { gErr = r.err; continue; }
     gf[ev] = r.f;
@@ -253,7 +261,7 @@ function place() {
   const leg = (i) => ({
     ev: i.ev, m: i.m, p: i.p, line: i.line ?? null, o: i.sel.o, b: i.sel.b,
     pick: pickLabel(i.e, i.m, i.p, i.line), mk: mName(i.m, i.e.sport), sp: i.e.sport, ls: i.e.lg,
-    match: `${i.e.home.n} – ${i.e.away.n}`, lg: lgBy.get(i.e.lg)?.name || '', start: i.e.start, res: null,
+    match: matchName(i.e), lg: lgBy.get(i.e.lg)?.name || '', start: i.e.start, res: null,
   });
   const mk = (legs, stake) => ({ id: S.seq++, t: Date.now(), stake: r2(stake), legs, status: 'open', payout: 0 });
   if (t.sys) S.bets.push({ ...mk(t.items.map(leg), t.total), sys: t.sys });
@@ -296,7 +304,27 @@ function img(t) { return t.l ? `<img src="${esc(t.l)}" alt="" loading="lazy" one
 
 const mainOf = (e) => (e.sport === 'fussball' || (e.sport === 'eishockey' && (e.m?.['1x2'] || e.wait)) || (e.sport === 'rugby' && e.m?.['1x2']) ? '1x2' : 'ml');
 
+// Ski-Rennen: drei Favoriten direkt, alle Fahrer mit Sieg / Podest / Top 10 aufklappbar
+function raceRow(e) {
+  const soon = e.start - Date.now() < 60 * 6e4;
+  const fav = (e.al || []).filter((a) => e.m?.sw?.[a.id]).sort((a, b) => e.m.sw[a.id].o - e.m.sw[b.id].o).slice(0, 3);
+  let h = `<div class="ev race">
+    <div class="when">${soon ? `<b class="cd" data-cd="${e.start}">${countdown(e.start)}</b>bis Start` : `<b>${timeLabel(e.start)}</b>${dayLabel(e.start)}`}</div>
+    <div class="teams"><div><span>⛷️ ${esc(e.home.n)}</span></div><div class="sub">${esc([e.away.n, e.tour, `${(e.al || []).length} Fahrer`, 'Modellquote'].filter(Boolean).join(' · '))}</div></div>
+    <div class="odds">${fav.map((a) => oddBtn(e, 'sw', a.id, a.n.replace(/\s+\S+\.$/, ''))).join('')}</div>
+    <button class="more" data-act="more" data-id="${esc(e.id)}">${V.open.has(e.id) ? '–' : 'Alle'}</button>
+  </div>`;
+  if (V.open.has(e.id)) {
+    h += `<div class="extra"><div class="mk"><h5>Sieger · Podest (Top 3) · Top 10 <i>Modellquote aus der Weltcup-Reihenfolge, mit Ausfällen</i></h5>
+      <div class="raceTbl"><div class="rh"><span>Fahrer</span><span>Sieg</span><span>Podest</span><span>Top 10</span></div>
+      ${(e.al || []).map((a) => `<div class="rr"><span class="rn"><b>${esc(a.n)}</b><small>${esc(a.c)}</small></span>${oddBtn(e, 'sw', a.id, '')}${oddBtn(e, 'sp', a.id, '')}${oddBtn(e, 's10', a.id, '')}</div>`).join('')}
+      </div><p class="hint">Nicht gestartet = Einsatz zurück. Ausgeschieden oder disqualifiziert = verloren. Mehrere Fahrer aus demselben Rennen gehen als Einzelwetten.</p></div></div>`;
+  }
+  return h;
+}
+
 function evRow(e) {
+  if (e.race) return raceRow(e);
   const main = mainOf(e);
   const soon = e.start - Date.now() < 60 * 6e4;
   const star = (t) => `<button class="star ${S.fav.includes(t.n) ? 'on' : ''}" data-act="fav" data-t="${esc(t.n)}" title="${S.fav.includes(t.n) ? 'Nicht mehr folgen' : 'Team folgen'}">${S.fav.includes(t.n) ? '★' : '☆'}</button>`;
@@ -379,7 +407,7 @@ function searchHits() {
   return D.events.filter((e) => {
     if (!bettable(e)) return false;
     const l = lgBy.get(e.lg);
-    const hay = fold([e.home.n, e.away.n, e.home.s, e.away.s, l?.name, l?.land, e.tour].join(' '));
+    const hay = fold([e.home.n, e.away.n, e.home.s, e.away.s, l?.name, l?.land, e.tour, ...(e.al || []).map((a) => a.n)].join(' '));
     return words.every((w) => hay.includes(w));
   });
 }
@@ -463,6 +491,7 @@ function betCard(b, adminOf) {
   return `<div class="bet ${b.who ? 'st-' + b.status : ''}">
     <div class="betHead"><div>${b.who ? `<b class="who">${esc(b.who)}</b>` : ''}<b>${betName(b)}</b><small>${new Date(b.t).toLocaleString('de-CH', { day: '2-digit', month: '2-digit', hour: '2-digit', minute: '2-digit' })}</small>${prog}</div><span class="badge ${b.status}" ${b.pend ? 'title="Steht fest. Ausbezahlt wird, sobald der Spieler die Seite öffnet."' : ''}>${label}${b.pend && (b.status === 'won' || b.ins) ? ' · Auszahlung folgt' : ''}</span></div>
     ${legs.map((l) => `<div class="leg ${l.res || ''}"><i class="dot ${l.res || ''}"></i><div><b>${esc(l.pick)}</b><small>${esc(l.mk)} · ${esc(l.match)}${l.lg ? ' · ' + esc(l.lg) : ''}</small><small>${l.res ? 'Resultat ' + esc(l.score) + (l.res === 'void' ? ' · ungültig, Quote 1.00' : '') : legState(l)}</small></div><span class="q">${q(l.o)}</span></div>`).join('')}
+    ${b.note ? `<p class="betNote">🤖 ${esc(b.note)}</p>` : ''}
     <div class="betFoot"><div><span>Einsatz${b.sys ? ` (${nRows(b.legs.length, b.sys)} Reihen à ${chf(b.stake / nRows(b.legs.length, b.sys))})` : ''}</span><b>CHF ${chf(b.stake)}</b></div><div><span>Gesamtquote</span><b>${q(odds)}</b></div><div><span>${b.status === 'open' ? 'Möglicher Gewinn' : 'Auszahlung'}</span><b class="${b.status === 'won' ? 'pos' : ''}">CHF ${chf(b.status === 'open' ? capWin(b.stake * odds) : b.payout)}</b>${(b.status === 'open' && b.stake * odds > MAX_WIN) || b.capped ? `<small class="cap">Höchstgewinn</small>` : ''}</div>${adminOf && typeof adminOf === 'string' ? `<button class="annul" data-act="annul" data-n="${esc(adminOf)}" data-id="${esc(b.id)}" data-t="${b.t}" title="Nur Admin: vertippten Schein löschen, Einsatz zurück">Löschen</button>` : ''}</div>
   </div>`;
 }
@@ -926,7 +955,7 @@ function renderSlip() {
     }
     h += t.items.map((i) => `<div class="pick ${i.ok ? '' : 'bad'}">
       <b>${i.e ? esc(pickLabel(i.e, i.m, i.p, i.line)) : 'Tipp'}</b>
-      <small>${mName(i.m)}${i.e ? ' · ' + esc(i.e.home.n) + ' – ' + esc(i.e.away.n) : ''}</small>
+      <small>${mName(i.m)}${i.e ? ' · ' + esc(matchName(i.e)) : ''}</small>
       ${i.ok ? `<small>${esc(i.sel.b === 'Modell' ? 'Modellquote' : i.sel.b)} · ${dayLabel(i.e.start)} ${timeLabel(i.e.start)}</small><span class="q">${q(i.sel.o)}</span>` : `<small class="err">${i.why}</small>`}
       <button class="x" data-act="pick" data-k="${esc(key(i.ev, i.m, i.p))}" title="Entfernen">×</button>
     </div>`).join('');

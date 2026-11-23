@@ -6,9 +6,9 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { FD, FD_LEAGUES, parseFixtures, parseResults } from './fd.mjs';
 import zlib from 'node:zlib';
-import { fit, derive, fromTable, oneXtwo, hockey, hockeyFit } from './model.mjs';
+import { fit, derive, fromTable, oneXtwo, hockey, hockeyFit, ratings, fromRatings } from './model.mjs';
 import { TS_LEAGUES, tsStart } from './tsdb.mjs';
-import { FS_SPORT, fsList, fsMatch, fsOdds, fsLeague } from './flashscore.mjs';
+import { FS_SPORT, fsList, fsMatch, fsOdds, fsLeague, fsRaces } from './flashscore.mjs';
 import { accounts } from './accounts.mjs';
 import { evalLeg, evalLegEarly, earlyText, settleBet, scoreText } from './public/settle.js';
 
@@ -118,6 +118,8 @@ const LEAGUES = [
   [B, null, 'euroleague', 'EuroLeague', 'International'],
   [B, null, 'eurocup', 'EuroCup', 'International'],
   [D, null, 'darts', 'PDC und weitere Turniere', 'Welt'],
+  ['ski', null, 'ski.m', 'Herren', 'Ski alpin'],
+  ['ski', null, 'ski.w', 'Damen', 'Ski alpin'],
   [AF, null, 'nfl', 'NFL', 'USA'],
   [AF, null, 'college-football', 'College Football', 'USA'],
   [R, null, 'rug.top14', 'Top 14', 'Frankreich'],
@@ -236,6 +238,8 @@ const tag = (obj, b) => Object.fromEntries(Object.entries(obj).map(([k, o]) => [
 
 function build(ev) {
   const s = ev.src || {};
+  // Ski-Rennen: nur Modellquoten (kein Buchmacher bietet sie über Flashscore an)
+  if (ev.race) { ev.m = s.ski || {}; ev.book = 'Modell'; ev.cmp = {}; return; }
   const soccer = ev.sport === F;
   if (s.fs?.m && Object.keys(s.fs.m).length) {
     // Flashscore hat Vorrang: alle Märkte vom ersten Anbieter (bet365, Interwetten, ...).
@@ -638,7 +642,83 @@ async function fsSweep() {
   fsStat = { matched, odds: own.filter((e) => e.src?.fs).length, at: Date.now() };
   lastSweep = Date.now();
   console.log(`Flashscore: ${own.length} offene Spiele in ${fsCovered.size} Ligen, ${fsStat.odds} mit Quoten`);
+  await skiSweep().catch((e) => console.log('Ski:', e.message));
   queueSave();
+}
+
+/* ---------- Ski alpin: Rennen mit Sieger-, Podest- und Top-10-Wetten ---------- */
+
+const DISC = { 'Downhill': 'Abfahrt', 'Super-G': 'Super-G', 'Giant Slalom': 'Riesenslalom', 'Slalom': 'Slalom', 'Alpine Combined': 'Kombination', 'Combined': 'Kombination', 'Team Combined': 'Team-Kombination', 'Parallel': 'Parallel' };
+// Ausfallquote pro Disziplin (Slalom am höchsten), ungefähr aus Weltcup-Resultaten
+const DNF = { Slalom: 0.24, Riesenslalom: 0.15, 'Super-G': 0.08, Abfahrt: 0.05 };
+const title = (s) => s.toLowerCase().replace(/(^|[\s.-])\S/g, (x) => x.toUpperCase());
+
+// Modell: Stärke aus der Reihenfolge der Favoriten (Flashscore-Position vor dem Rennen).
+// Plackett-Luce mit Gumbel-Zufall, dazu Ausfälle; die Liste wird bis 70 Läufer mit «Rest des Feldes» aufgefüllt.
+// Quote = 0.88 / Wahrscheinlichkeit (12 % Marge wie bei Siegerwetten üblich), als «Modellquote» angeschrieben.
+function skiModel(ath, disc) {
+  // Stärke = Position^-1.3: die Besten deutlich vorne (Nr. 1 gewinnt ohne Ausfall rund jedes dritte Rennen)
+  const A = 1.3, N = 20000, dnf = DNF[disc] ?? 0.15;
+  const field = ath.map((a) => ({ id: a.id, s: a.seed }));
+  const maxS = Math.max(30, ...field.map((a) => a.s < 99 ? a.s : 0));
+  for (let s = maxS + 1; s <= 70; s++) field.push({ id: null, s });
+  const lw = field.map((a) => -A * Math.log(Math.min(a.s, 70)));
+  const cnt = field.map(() => [0, 0, 0]);
+  const sc = new Float64Array(field.length), idx = field.map((_, i) => i);
+  for (let n = 0; n < N; n++) {
+    for (let i = 0; i < field.length; i++) sc[i] = Math.random() < dnf ? -1e9 : lw[i] - Math.log(-Math.log(Math.random()));
+    idx.sort((a, b) => sc[b] - sc[a]);
+    for (let r = 0; r < 10; r++) { const i = idx[r]; if (sc[i] < -1e8) break; if (r === 0) cnt[i][0]++; if (r < 3) cnt[i][1]++; cnt[i][2]++; }
+  }
+  const odds = (c) => { const p = Math.max(c / N, 0.0015); const o = 0.88 / p; return Math.min(501, Math.max(1.03, o < 10 ? Math.round(o * 100) / 100 : o < 50 ? Math.round(o * 2) / 2 : Math.round(o))); };
+  const m = { sw: {}, sp: {}, s10: {} };
+  field.forEach((a, i) => {
+    if (!a.id) return;
+    m.sw[a.id] = { o: odds(cnt[i][0]), b: 'Modell' };
+    m.sp[a.id] = { o: odds(cnt[i][1]), b: 'Modell' };
+    m.s10[a.id] = { o: odds(cnt[i][2]), b: 'Modell' };
+  });
+  return m;
+}
+
+async function skiSweep() {
+  const now = Date.now();
+  for (const d of [0, 1, 2, -1, 3, 4, 5, 6, 7, -2, -3]) {
+    const k = 'ski|' + d, c = fsDays.get(k);
+    const ttl = d >= -1 && d <= 0 ? 5 : d < -1 ? 180 : 60;
+    if (c && now - c.at < ttl * 6e4) continue;
+    try { fsDays.set(k, { at: now, races: await fsRaces(d) }); } catch { /* nächstes Mal */ }
+    await new Promise((r) => setTimeout(r, 300));
+  }
+  let n = 0;
+  for (const [k, c] of fsDays) {
+    if (!k.startsWith('ski|')) continue;
+    for (const r of c.races || []) {
+      // «COPPER MT.: Giant Slalom - Men (USA)»
+      const mt = /^(.+?):\s*(.+?)\s+-\s+(Men|Women)\s*(?:\((.+)\))?/.exec(r.name);
+      if (!mt || r.ath.length < 8) continue;
+      const disc = DISC[mt[2]] || mt[2];
+      const id = 'sk' + r.id, old = store.get(id);
+      const ath = r.ath.slice().sort((a, b) => a.seed - b.seed);
+      const done = r.state === 'post' && !r.void;
+      const ev = {
+        id, sport: 'ski', race: true, lg: mt[3] === 'Men' ? 'ski.m' : 'ski.w', start: r.start, day: '',
+        home: { id: '', n: `${title(mt[1])} · ${disc}`, s: title(mt[1]), l: '' }, away: { id: '', n: mt[3] === 'Men' ? 'Herren' : 'Damen', s: '', l: '' },
+        tour: mt[4] || '', disc, state: r.void ? 'post' : r.state, done, void: r.void, et: false, ot: false, sh: null, sa: null,
+        txt: r.void ? 'abgesagt' : r.state === 'in' ? 'läuft' : done ? 'Beendet' : '',
+        al: ath.map((a) => ({ id: a.id, n: a.n, c: a.c })),
+        ranks: done ? Object.fromEntries(r.ath.map((a) => [a.id, a.rank])) : null,
+        src: {},
+      };
+      // Modell nur vor dem Start neu rechnen, und nur wenn sich die Startliste geändert hat
+      const sig = 'v2|' + ath.map((a) => a.id + a.seed).join(); // v2 = Modellversion, bei Änderungen am Modell erhöhen
+      if (r.state === 'pre') ev.src.ski = old?.skiSig === sig && old.src?.ski ? old.src.ski : skiModel(ath, disc);
+      ev.skiSig = r.state === 'pre' ? sig : old?.skiSig;
+      upsert(ev);
+      n++;
+    }
+  }
+  console.log(`Ski: ${n} Rennen`);
 }
 
 async function getText(url) {
@@ -699,7 +779,7 @@ function payload(need) {
     if (!need.has(ev.id) && onlyReal.has(ev.lg) && !ev.src?.fs?.m?.['1x2']) continue;
     // Liga kommt von Flashscore: Spiele aus anderen Quellen nur noch für bestehende Wetten zeigen.
     if (!need.has(ev.id) && fsCovered.has(ev.lg) && !ev.id.startsWith('fs')) continue;
-    const { src, b365At, day, fsId, fsH, fsA, fsAt, mv, ...pub } = ev;
+    const { src, b365At, day, fsId, fsH, fsA, fsAt, mv, skiSig, ...pub } = ev;
     // Pfeile nur für Quoten, die sich in den letzten 2 Stunden geändert haben
     if (mv) {
       const rec = {};
@@ -712,7 +792,7 @@ function payload(need) {
       for (const k of ['state', 'done', 'void', 'sh', 'sa', 'win', 'h1', 'et', 'ot', 'txt', 'ph']) pub[k] = tw[k];
     }
     // Modellquoten nur, wenn 24 Stunden vor dem Spiel immer noch kein Buchmacher Quoten hat.
-    if (ev.book === 'Modell' && ev.start - now > DAY) { pub.m = {}; pub.cmp = {}; pub.wait = true; }
+    if (ev.book === 'Modell' && !ev.race && ev.start - now > DAY) { pub.m = {}; pub.cmp = {}; pub.wait = true; }
     events.push(pub);
   }
   return { t: now, upd: lastSweep, leagues: LEAGUES.filter((l) => !l.dead || fsCovered.has(l.slug)).map(({ slug, sport, name, land }) => ({ slug, sport, name, land })), events };
@@ -734,7 +814,7 @@ function liveBets(bets = []) {
     for (const l of b.legs || []) {
       if (l.res) continue;
       const e = evFor(l.ev), r = e && evalLeg(l, e);
-      if (r) { l.res = r; l.score = scoreText(e); continue; }
+      if (r) { l.res = r; l.score = scoreText(e, l); continue; }
       const early = e && evalLegEarly(l, e);
       if (early) { l.res = early; l.score = earlyText(e); l.early = true; }
     }
@@ -743,6 +823,113 @@ function liveBets(bets = []) {
     if (out) Object.assign(b, { status: out.status, payout: out.payout, done: Date.now(), pend: true, ...(out.ins ? { ins: true } : {}), ...(out.capped ? { capped: true } : {}) });
   }
   return bets;
+}
+
+// Clauder: Bot-Spieler, dessen Tipps in clauder.json stehen (Spiel-ID, Markt, Tipp, Einsatz, Begründung).
+const BOT_FILE = path.join(DIR, 'clauder.json');
+function botLeg(t) {
+  const now = Date.now(), ev = store.get(t.ev);
+  if (!ev) return t.start && now > Date.parse(t.start) ? 'gone' : null;
+  if (ev.void || ev.done || ev.state !== 'pre' || ev.start <= now + 5 * 6e4) return 'gone';
+  const mk = ev.m?.[t.m], sel = mk?.[t.p];
+  if (!sel?.o) return ev.start - now < 30 * 6e4 ? 'gone' : null;
+  // Quote darf seit der Analyse nicht stark gefallen sein, sonst lohnt sich der Tipp nicht mehr
+  if (t.minOdds && sel.o < t.minOdds) return ev.start - now < 30 * 6e4 ? 'gone' : null;
+  const L = LEAGUES.find((l) => l.slug === ev.lg);
+  return {
+    ev: ev.id, m: t.m, p: t.p, line: mk.line ?? null, o: sel.o, b: sel.b, pick: t.pick || t.p, mk: t.mk || t.m, sp: ev.sport, ls: ev.lg,
+    match: ev.race ? `${ev.home.n} ${ev.away.n}` : `${ev.home.n} – ${ev.away.n}`, lg: L?.name || '', start: ev.start, res: null,
+  };
+}
+function botSettle(b) {
+  for (const l of b.legs) {
+    if (l.res) continue;
+    const e = evFor(l.ev), r = e && evalLeg(l, e);
+    if (r) { l.res = r; l.score = scoreText(e, l); continue; }
+    const early = e && evalLegEarly(l, e);
+    if (early) { l.res = early; l.score = earlyText(e); l.early = true; }
+  }
+  return settleBet(b);
+}
+// Auto-Runde: Clauder sucht selbst Tipps. Formmodell (Angriff/Abwehr aus den Resultaten der Liga, bei
+// Basketball Punktedifferenz) gegen die Buchmacherquote. Je mehr Spiele er von beiden Teams kennt, desto
+// mehr zählt sein Modell und desto höher der Einsatz. Ohne klaren Vorteil tippt er nicht.
+const phi = (x) => 1 / (1 + Math.exp(-1.702 * x));
+function botAuto(s) {
+  const now = Date.now(), all = [...store.values()];
+  const byLg = new Map();
+  for (const e of all) {
+    if (!e.done || e.void || !Number.isFinite(e.sh) || !Number.isFinite(e.sa) || now - e.start > 120 * DAY) continue;
+    if (!byLg.has(e.lg)) byLg.set(e.lg, []);
+    byLg.get(e.lg).push(e);
+  }
+  const games = (lg) => {
+    const list = byLg.get(lg) || [], fsOnly = list.filter((e) => String(e.id).startsWith('fs'));
+    const use = fsOnly.length >= 6 ? fsOnly : list, seen = new Set();
+    return use.filter((e) => { const k = `${e.home.n}|${e.away.n}|${Math.round(e.start / 36e5)}`; if (seen.has(k)) return false; seen.add(k); return true; })
+      .map((e) => ({ home: e.home.n, away: e.away.n, hs: e.sh, as: e.sa, ts: e.start }));
+  };
+  const R = new Map(), cnt = (G, t) => G.filter((g) => g.home === t || g.away === t).length;
+  const cands = [];
+  for (const ev of all) {
+    if (!String(ev.id).startsWith('fs') || ev.state !== 'pre' || ev.void || ev.race) continue;
+    if (ev.start < now + 2 * 36e5 || ev.start > now + 36 * 36e5 || !ev.book || /modell/i.test(ev.book)) continue;
+    if (![F, H, B].includes(ev.sport)) continue;
+    const mk = ev.sport === B ? 'ml' : '1x2', w = ev.m?.[mk];
+    const keys = ev.sport === B ? ['1', '2'] : ['1', 'X', '2'];
+    if (!w || keys.some((k) => !(w[k]?.o > 1))) continue;
+    const G = games(ev.lg), h = ev.home.n, a = ev.away.n;
+    const n = Math.min(cnt(G, h), cnt(G, a));
+    if (n < 5) continue; // zu wenig Wissen über eines der Teams
+    let pm;
+    if (ev.sport === B) {
+      const mar = (t) => { const g = G.filter((x) => x.home === t || x.away === t).slice(-12); return g.reduce((x, y) => x + (y.home === t ? y.hs - y.as : y.as - y.hs), 0) / g.length; };
+      const p1 = phi(((mar(h) - mar(a)) / 2 + 3) / 12); // Heimvorteil ~3 Punkte, Streuung ~12
+      pm = { 1: p1, 2: 1 - p1 };
+    } else {
+      if (!R.has(ev.lg)) R.set(ev.lg, ratings(G, now));
+      const r = R.get(ev.lg);
+      if (!r) continue;
+      const lam = fromRatings(r, h, a, ev.sport === H ? 6 : 3.5, ev.sport === H ? 1 : 0.8);
+      const o = ev.sport === H ? hockey(lam).w : oneXtwo(lam, '');
+      if (!o) continue;
+      const inv = keys.map((k) => 1 / (o[k].o ?? o[k])), t = inv.reduce((x, y) => x + y, 0);
+      pm = Object.fromEntries(keys.map((k, i) => [k, inv[i] / t]));
+    }
+    const inv = keys.map((k) => 1 / w[k].o), tot = inv.reduce((x, y) => x + y, 0);
+    // Gewicht des eigenen Modells: Basketball-Form ohne Gegnerstärke ist unsicherer, darum weniger
+    const c = Math.min(1, n / (ev.sport === B ? 14 : 10)), wt = (ev.sport === B ? 0.25 : 0.4) * c;
+    for (const [i, k] of keys.entries()) {
+      const pMkt = inv[i] / tot, p = (1 - wt) * pMkt + wt * pm[k], o = w[k].o, edge = p * o - 1;
+      if (edge < 0.03 || o > 4.5) continue;
+      cands.push({ ev, k, mk, o, p, pMkt, pm: pm[k], edge, c, n, score: edge * c });
+    }
+  }
+  cands.sort((x, y) => y.score - x.score);
+  const picks = [], used = new Set(), day = new Date(now).toISOString().slice(0, 10);
+  let budget = Math.floor(s.bal * 0.4);
+  for (const x of cands) {
+    if (picks.length >= 6 || used.has(x.ev.id)) continue;
+    const stake = Math.min(50, budget, Math.max(5, Math.round(50 * x.c * Math.min(1, x.edge / 0.1) / 5) * 5));
+    if (stake < 5) break;
+    used.add(x.ev.id); budget -= stake;
+    const name = x.k === '1' ? x.ev.home.n : x.k === '2' ? x.ev.away.n : 'Unentschieden';
+    const pc = (v) => Math.round(v * 100);
+    picks.push({
+      id: `a-${day}-${x.ev.id}`, ev: x.ev.id, start: new Date(x.ev.start).toISOString(), m: x.mk, p: x.k, pick: name,
+      mk: x.mk === 'ml' ? 'Sieger (inkl. Verlängerung)' : 'Spielausgang', minOdds: Math.round(x.o * 0.95 * 100) / 100, stake,
+      note: `Auto-Runde. Formmodell aus ${x.n}+ Spielen pro Team: ${pc(x.pm)} %, Buchmacher ${pc(x.pMkt)} %, gemischt ${pc(x.p)} %. Quote ${x.o} ergibt ${Math.round(x.edge * 100)} % Vorteil.`,
+    });
+  }
+  console.log(`Clauder Auto-Runde: ${cands.length} Kandidaten, ${picks.length} Tipps`);
+  return picks;
+}
+async function botSweep() {
+  let cfg;
+  try { cfg = JSON.parse(fs.readFileSync(BOT_FILE, 'utf8')); } catch { return; }
+  if (process.env.WB_BOT_DRY) for (const p of botAuto({ bal: 500 })) console.log('  trocken:', p.pick, p.o ?? '', p.stake, p.note);
+  const r = await acc.botRun(cfg, { legOf: botLeg, settle: botSettle, auto: cfg.auto === false ? null : botAuto });
+  if (r) console.log(`Clauder: ${r.error || `CHF ${r.bal}, ${r.open} offen, ${r.bets} Scheine`}`);
 }
 
 let plain = { at: 0, body: '' };
@@ -847,6 +1034,7 @@ tsStart({ upsert, dataDir: DATA, log: (m) => console.log(m) });
   await new Promise((r) => setTimeout(r, 2000));
   for (;;) {
     await fsSweep().catch((e) => console.log('Flashscore fehlgeschlagen:', e.message));
+    await botSweep().catch((e) => console.log('Clauder fehlgeschlagen:', e.message));
     await new Promise((r) => setTimeout(r, 3 * 60e3));
   }
 })();

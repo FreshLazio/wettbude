@@ -1,0 +1,96 @@
+{
+  "name": "Clauder",
+  "about": "Bot-Spieler. Der Server bucht diese Tipps zur aktuellen Quote, sobald sie verfügbar sind und die Quote nicht unter minOdds gefallen ist. Höchstens CHF 50 pro Spiel.",
+  "picks": [
+    {
+      "id": "2026-11-24-feyporto",
+      "ev": "fs6grtKluR", "start": "2026-11-24T20:00:00Z",
+      "m": "1x2", "p": "2", "pick": "FC Porto", "mk": "Spielausgang", "minOdds": 2.15, "stake": 40,
+      "note": "Porto 11 aus 11 in der Liga, Feyenoord 6 Spiele ohne Sieg, 11 Gegentore in 4 CL-Spielen, Beelen, Bos, St. Juste, Moder, Nieuwkoop fehlen. Quote 2.35 = 43 %, geschätzt eher 48 %."
+    },
+    {
+      "id": "2026-11-24-galavilla",
+      "ev": "fsOCNDYmfK", "start": "2026-11-24T17:45:00Z",
+      "m": "ou2.5", "p": "U", "pick": "Unter 2.5 Tore", "mk": "Über/Unter", "minOdds": 2.9, "stake": 15,
+      "note": "Galatasaray ohne Osimhen (Knie-OP) und Leão, Villa ohne Onana und Cash. Der Markt rechnet mit vielen Toren (Über 1.36), ohne die beiden Stürmer ist Unter 2.5 bei 3.20 zu hoch."
+    },
+    {
+      "id": "2026-11-25-sportmanu",
+      "ev": "fsCEDJzDKq", "start": "2026-11-25T20:00:00Z",
+      "m": "1x2", "p": "1", "pick": "Sporting CP", "mk": "Spielausgang", "minOdds": 2.3, "stake": 35,
+      "note": "Sporting 3 von 4 CL-Spielen gewonnen, zu Hause. United nach 0:4 in Liverpool, Yoro gesperrt (Rot), De Ligt und Ugarte verletzt. Quote 2.50 = 40 %, geschätzt 46 %."
+    },
+    {
+      "id": "2026-11-25-shakfener",
+      "ev": "fsrB9Y2j5S", "start": "2026-11-25T20:00:00Z",
+      "m": "dnb", "p": "2", "pick": "Fenerbahce", "mk": "Unentschieden: Geld zurück", "minOdds": 1.7, "stake": 30,
+      "note": "Acht Shakhtar-Spieler blieben an der polnischen Grenze hängen, Anreise gestört. Fenerbahce ohne Aké und Brown. Sieg Fener oder Geld zurück bei Remis."
+    },
+    {
+      "id": "2026-11-25-lillebayern",
+      "ev": "fsCfLLoIBm", "start": "2026-11-25T20:00:00Z",
+      "m": "dc", "p": "1X", "pick": "Lille oder Unentschieden", "mk": "Doppelte Chance", "minOdds": 2.1, "stake": 20,
+      "note": "Bayern ohne Kane (Bänderriss, rund 3 Monate), Olise (Fuss) wohl out, Gnabry und Saibari fehlen, Musiala noch nicht fit. 1.57 für Bayern auswärts ist zu tief."
+    },
+    {
+      "id": "2026-11-25-bruggelfc",
+      "ev": "fs6wSZISyp", "start": "2026-11-25T20:00:00Z",
+      "m": "dnb", "p": "1", "pick": "Club Brugge", "mk": "Unentschieden: Geld zurück", "minOdds": 3.0, "stake": 15,
+      "note": "Brugge hat die letzten 3 CL-Spiele gewonnen (4:3 bei Inter). Liverpool ohne Gakpo, Ekitiké, Bradley, Leoni, Gravenberch fraglich. Kleiner Einsatz auf den Aussenseiter."
+    },
+    {
+      "id": "2026-11-24-magnominsk",
+      "ev": "fsGAdccOYR", "start": "2026-11-24T14:00:00Z",
+      "m": "ou5.5", "p": "U", "pick": "Unter 5.5 Tore", "mk": "Über/Unter", "minOdds": 1.7, "stake": 20,
+      "note": "KHL. Dinamo Minsk spielt Beton: zuletzt 2:1, 2:1, 1:1, 0:1, 4:1, kaum ein Spiel mit mehr als 5 Toren. Magnitogorsk ist Zweiter, aber Minsk lässt wenig zu. Unter 5.5 bei 1.80 passt."
+    },
+    {
+      "id": "2026-11-24-dynamoekb",
+      "ev": "fsfVlLJShS", "start": "2026-11-24T16:30:00Z",
+      "m": "1x2", "p": "1", "pick": "Dynamo Moscow", "mk": "Spielausgang", "minOdds": 2.15, "stake": 30,
+      "note": "KHL. Dynamo Moskau hat die letzten 5 Spiele alle gewonnen (Tore 15:7), jetzt zuhause. 2.30 nach 60 Minuten ist für diese Form zu hoch."
+    },
+    {
+      "id": "2026-11-24-stavstorh",
+      "ev": "fsSAmXWX6m", "start": "2026-11-24T17:30:00Z",
+      "m": "ou5.5", "p": "O", "pick": "Über 5.5 Tore", "mk": "Über/Unter", "minOdds": 1.75, "stake": 25,
+      "note": "Norwegen, verrückte Liga. Storhamar-Spiele zuletzt im Schnitt 8 Tore (6:2, 5:2, 4:5, 4:4), Stavanger hat 3 Siege in Serie mit 14 Toren. Über 5.5 bei 1.85 ist Geschenk."
+    },
+    {
+      "id": "2026-11-24-orebrofrol",
+      "ev": "fsGWm1nVy8", "start": "2026-11-24T18:00:00Z",
+      "m": "1x2", "p": "2", "pick": "Frolunda", "mk": "Spielausgang", "minOdds": 1.9, "stake": 30,
+      "note": "SHL. Frölunda ist Zweiter (38 Punkte) und hat in den letzten 4 Spielen nur 3 Tore bekommen (2:0, 4:0, 4:1). Örebro kassierte zuletzt 8 in einem Spiel. Frölunda auswärts bei 2.00."
+    },
+    {
+      "id": "2026-11-24-bernambri",
+      "ev": "fsrqPmFXP6", "start": "2026-11-24T18:45:00Z",
+      "m": "1x2", "p": "1", "pick": "Bern", "mk": "Spielausgang", "minOdds": 1.7, "stake": 35,
+      "note": "National League. Der SCB ist auf einer Siegesserie (9:5, 5:2, 5:2, 4:3), schiesst fast 5 Tore pro Spiel. Ambri verliert auswärts regelmässig (4:6, 1:4). Bern zuhause bei 1.80."
+    },
+    {
+      "id": "2026-11-24-luganobiel",
+      "ev": "fsMTfMGp1B", "start": "2026-11-24T18:45:00Z",
+      "m": "1x2", "p": "1", "pick": "Lugano", "mk": "Spielausgang", "minOdds": 1.8, "stake": 25,
+      "note": "National League. Biel hat die letzten 3 nicht gewonnen und dabei 17 Tore kassiert (5:9, 2:5). Lugano zuhause bei 1.91."
+    },
+    {
+      "id": "2026-11-25-skaloko",
+      "ev": "fsQDuiE6Gk", "start": "2026-11-25T16:30:00Z",
+      "m": "1x2", "p": "2", "pick": "Lokomotiv Yaroslavl", "mk": "Spielausgang", "minOdds": 1.75, "stake": 30,
+      "note": "KHL. Lokomotiv ist Dritter, Tore zuletzt 13:5 mit drei Zu-null-Siegen. SKA nur Achter und hat zuhause 1:5 und 1:4 verloren. Loko auch auswärts bei 1.85."
+    },
+    {
+      "id": "2026-11-24-asvelmilano",
+      "ev": "fs0At758Bk", "start": "2026-11-24T19:45:00Z",
+      "m": "ml", "p": "2", "pick": "Olimpia Milano", "mk": "Sieger (inkl. Verlängerung)", "minOdds": 1.62, "stake": 25,
+      "note": "EuroLeague. Lyon-Villeurbanne hat die letzten zwei mit 26 und 34 Punkten Rückstand verloren (81:107, 81:115). Milano gewann beide letzten Spiele klar. 1.72 auswärts ist fair bis gut."
+    },
+    {
+      "id": "2026-11-24-barcafener",
+      "ev": "fsAcgLECl3", "start": "2026-11-24T20:00:00Z",
+      "m": "ml", "p": "2", "pick": "Fenerbahce", "mk": "Sieger (inkl. Verlängerung)", "minOdds": 1.62, "stake": 15,
+      "note": "EuroLeague. Barça hat zwei in Folge verloren und muss drei Wochen ohne Umoja Gibson auskommen (Verletzung in Runde 11). Fenerbahce schlug zuletzt einen Gegner 115:81. Wenig Infos, darum kleiner Einsatz."
+    }
+  ]
+}

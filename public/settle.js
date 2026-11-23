@@ -8,6 +8,12 @@ const result = (h, a) => (h > a ? '1' : h < a ? '2' : 'X');
 export function evalLeg(leg, ev) {
   if (ev.void) return 'void';
   if (!ev.done) return null;
+  // Ski: Sieger, Podest (Top 3), Top 10. Nicht gestartet = ungültig, ausgeschieden/disqualifiziert = verloren.
+  if (ev.race) {
+    const r = ev.ranks?.[leg.p], top = { sw: 1, sp: 3, s10: 10 }[leg.m];
+    if (!top || r === undefined || r === 'dns') return 'void';
+    return r != null && r <= top ? 'won' : 'lost';
+  }
   let h = ev.sh, a = ev.sa;
   const m = leg.m;
   if (m === 'ml') {
@@ -122,7 +128,14 @@ export const earlyText = (e) => `${e.sh}:${e.sa} · früh abgerechnet, Spiel lie
 
 // Resultat-Text eines Tipps. Nach Verlängerung/Penaltys steht der Endstand dabei,
 // z. B. «2:2 · n. P. 2:3» (Eishockey: 2:2 nach 60 Minuten, im Penaltyschiessen 2:3).
-export const scoreText = (e) => (e.void ? 'abgesagt' : `${e.sh}:${e.sa}` + (/^n\. [VP]\./.test(e.txt || '') ? ` · ${e.txt}` : ''));
+export const scoreText = (e, leg) => (e.void ? 'abgesagt' : e.race ? raceText(e, leg) : `${e.sh}:${e.sa}` + (/^n\. [VP]\./.test(e.txt || '') ? ` · ${e.txt}` : ''));
+// Ski: Rang des getippten Athleten und wer gewonnen hat, z. B. «2. Platz · Sieger Haugan T.»
+function raceText(e, leg) {
+  const r = e.ranks?.[leg?.p];
+  const win = (e.al || []).find((a) => e.ranks?.[a.id] === 1)?.n;
+  const mine = r === 'dns' ? 'nicht gestartet' : r == null ? 'ausgeschieden' : `${r}. Platz`;
+  return mine + (win ? ` · Sieger ${win}` : '');
+}
 
 // Kombi-Versicherung wie bei echten Buchmachern (Betfair «Acca Edge», Betvictor u. a.):
 // Ist bei einer grossen Kombi genau ein Spiel falsch, gibt es den Einsatz zurück.

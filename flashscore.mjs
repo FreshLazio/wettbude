@@ -43,6 +43,43 @@ export async function fsList(sportId, day) {
 }
 const IMG = 'https://www.flashscore.com/res/image/data/';
 
+// Ski alpin (Flashscore-Sportart 39): pro Tag alle Rennen mit ihren Athleten.
+// Pro Athlet kommen die Felder RAA (Art) / RAB (Wert) mehrfach vor:
+// 1 Rang, 5 Gesamtzeit, 6 Rückstand, 7 Position in der Liste (vor dem Rennen: Reihenfolge der Favoriten),
+// 8 Status: 280 nicht für den 2. Lauf qualifiziert (bleibt klassiert), 281 disqualifiziert, 282 nicht gestartet, 283 ausgeschieden.
+export async function fsRaces(day) {
+  const t = await get(`${LIST}f_39_${day}_1_en_1`);
+  const races = new Map();
+  let hdr = {};
+  for (const rec of t.split('¬~')) {
+    const f = {}, R = {};
+    let a = null;
+    for (const kv of rec.split('¬')) {
+      const i = kv.indexOf('÷');
+      if (i <= 0) continue;
+      const k = kv.slice(0, i), v = kv.slice(i + 1);
+      if (k === 'RAA') a = v; else if (k === 'RAB' && a != null) { R[a] = v; a = null; } else f[k] = v;
+    }
+    if (f.ZA) hdr = f;
+    if (!f.AA || !hdr.ZC) continue;
+    const r = races.get(hdr.ZC) || { id: hdr.ZC, name: hdr.ZA, start: +f.AD * 1000, st: [], ath: [] };
+    r.st.push({ ab: +f.AB || 0, ac: +f.AC || 0 });
+    const code = +R[8] || 0;
+    r.ath.push({
+      id: f.JA || f.PX || f.AA, n: f.AE || f.FH || '', c: f.FU || '', seed: +R[7] || 99,
+      rank: code === 282 ? 'dns' : code === 281 || code === 283 ? null : R[5] && +R[1] ? +R[1] : null,
+      time: R[5] || '',
+    });
+    races.set(hdr.ZC, r);
+  }
+  return [...races.values()].map((r) => ({
+    ...r,
+    // 1 vor dem Start, 2 läuft, 3 fertig; fertig, aber nicht normal beendet (AC ≠ 3) = abgesagt
+    state: r.st.every((x) => x.ab === 1) ? 'pre' : r.st.every((x) => x.ab === 3) ? 'post' : 'in',
+    void: r.st.every((x) => x.ab === 3) && r.st.some((x) => x.ac !== 3),
+  }));
+}
+
 // Flashscore-Ligenname («LAND: Liga» oder «LAND: Liga - Runde») -> unsere Liga.
 const FS_LEAGUES = {
   'sui.1': 'SWITZERLAND: Super League', 'sui.2': 'SWITZERLAND: Challenge League', 'sui.cup': ['SWITZERLAND: Swiss Cup', 'SWITZERLAND: Schweizer Cup'], 'fra.coupe_de_france': 'FRANCE: Coupe de France',
