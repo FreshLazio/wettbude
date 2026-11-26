@@ -984,6 +984,32 @@ async function fsSweep() {
   queueSave();
 }
 
+// Live-Stände und Resultate: unabhängig von der langen Runde oben (Quoten, Ski, Bot) alle 90 Sekunden
+// die Tageslisten der Sportarten holen, in denen ein Flashscore-Spiel angefangen hat, aber nicht abgerechnet ist.
+let fsLiveBusy = false;
+async function fsLive() {
+  if (fsLiveBusy) return;
+  fsLiveBusy = true;
+  try {
+    const now = Date.now();
+    const open = [...store.values()].filter((e) => e.id.startsWith('fs') && !e.done && !e.void && e.start < now && e.start > now - 2 * DAY);
+    const known = new Set(LEAGUES.map((l) => l.slug));
+    for (const sport of new Set(open.map((e) => e.sport))) {
+      const sid = FS_SPORT[sport];
+      if (!sid) continue;
+      for (const d of open.some((e) => e.sport === sport && now - e.start > 8 * 36e5) ? [0, -1] : [0]) {
+        let list;
+        try { list = (await fsList(sid, d)).filter((x) => !/\//.test(x.home + x.away)); } catch { continue; }
+        fsDays.set(sport + '|' + d, { at: Date.now(), list });
+        for (const x of list) {
+          const slug = fsLeague(sport, x.lg);
+          if (slug && known.has(slug) && store.has('fs' + x.id)) upsert(fsEvent(sport, slug, x));
+        }
+      }
+    }
+  } finally { fsLiveBusy = false; }
+}
+
 /* ---------- Ski alpin: Rennen mit Sieger-, Podest- und Top-10-Wetten ---------- */
 
 const DISC = { 'Downhill': 'Abfahrt', 'Super-G': 'Super-G', 'Giant Slalom': 'Riesenslalom', 'Slalom': 'Slalom', 'Alpine Combined': 'Kombination', 'Combined': 'Kombination', 'Team Combined': 'Team-Kombination', 'Parallel': 'Parallel' };
@@ -1526,3 +1552,4 @@ tsStart({ upsert, dataDir: DATA, log: (m) => console.log(m) });
     await new Promise((r) => setTimeout(r, 3 * 60e3));
   }
 })();
+setInterval(() => fsLive().catch(() => {}), 90e3);
