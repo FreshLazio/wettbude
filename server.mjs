@@ -916,7 +916,8 @@ async function fsSweep() {
     }
   }
   const lists = new Map();
-  for (const [k, c] of fsDays) { const s = k.split('|')[0]; if (!lists.has(s)) lists.set(s, []); lists.get(s).push(...c.list); }
+  // (im selben Speicher liegen auch die Ski-Rennen, die haben keine Spielliste)
+  for (const [k, c] of fsDays) { if (!Array.isArray(c.list)) continue; const s = k.split('|')[0]; if (!lists.has(s)) lists.set(s, []); lists.get(s).push(...c.list); }
   // Spiele der bekannten Ligen direkt übernehmen
   const known = new Set(LEAGUES.map((l) => l.slug));
   for (const [sport, list] of lists) {
@@ -975,6 +976,13 @@ async function fsSweep() {
     }
     await new Promise((r) => setTimeout(r, 250));
   });
+  // Laufende oder fertige Spiele anderer Quellen (z. B. TheSportsDB, langsam) ohne Zwilling nachträglich koppeln,
+  // damit Stand und Resultat von Flashscore kommen (evFor)
+  for (const ev of store.values()) {
+    if (ev.fsId || ev.u19 || ev.done || ev.void || ev.id.startsWith('fs') || ev.start > now || ev.start < now - DAY) continue;
+    const hit = lists.has(ev.sport) && fsMatch(ev, lists.get(ev.sport));
+    if (hit) Object.assign(ev, { fsId: hit.id, fsH: hit.hp, fsA: hit.ap });
+  }
   const own = open.filter((e) => e.id.startsWith('fs'));
   fsStat = { matched, odds: own.filter((e) => e.src?.fs).length, at: Date.now() };
   lastSweep = Date.now();
@@ -1323,7 +1331,9 @@ function liveBets(bets = []) {
       const e = evFor(l.ev), r = e && evalLeg(l, e);
       if (r) { l.res = r; l.score = scoreText(e, l); continue; }
       const early = e && evalLegEarly(l, e);
-      if (early) { l.res = early; l.score = earlyText(e); l.early = true; }
+      if (early) { l.res = early; l.score = earlyText(e); l.early = true; continue; }
+      // Für die Anzeige bei anderen Spielern (deren Spiele hat der Besucher nicht geladen): Stand und neue Anstosszeit
+      if (e) l.live = { state: e.state, sh: e.sh, sa: e.sa, txt: e.txt || '', start: e.start };
     }
     const out = settleBet(b);
     // pend: entschieden, aber beim Besitzer noch nicht ausbezahlt
